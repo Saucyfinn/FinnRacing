@@ -1,0 +1,244 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>FinnRacing &mdash; Online</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    --bg: #0c1a1f;
+    --water-a: #0e2530;
+    --water-b: #0a1c24;
+    --surface: #122228;
+    --surface-alt: #182d33;
+    --ink: #e2ece9;
+    --ink-dim: #b7c7c5;
+    --muted: #7d9997;
+    --border: #274045;
+    --accent: #dba85a;
+    --accent-strong: #f0c581;
+    --port: #e2726f;
+    --starboard: #5fc28c;
+    --danger: #e2726f;
+    --focus: #6fa9d9;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--ink);
+    font-family: "Public Sans", system-ui, sans-serif;
+    touch-action: none;
+    user-select: none;
+  }
+
+  #world { position: fixed; inset: 0; display: block; }
+
+  .hud {
+    position: fixed; inset: 0;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: max(14px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom));
+    gap: 8px;
+  }
+  .hud * { pointer-events: auto; }
+
+  .top-stack { display: flex; flex-direction: column; gap: 8px; }
+  .top-bar { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+
+  .card {
+    background: rgba(18,34,40,0.82);
+    backdrop-filter: blur(6px);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+  }
+
+  .doc-title { font-family: "Fraunces", Georgia, serif; font-weight: 600; font-size: 15px; letter-spacing: -0.01em; margin: 0 0 2px; }
+  .doc-sub { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; color: var(--muted); letter-spacing: 0.03em; }
+
+  .readouts { display: grid; grid-template-columns: repeat(2, auto); gap: 2px 18px; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12.5px; }
+  .readouts .lbl { color: var(--muted); }
+  .readouts .val { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; font-weight: 500; }
+  .readouts .val.warn { color: var(--danger); }
+
+  .tack-badge {
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; letter-spacing: 0.06em;
+    padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); text-align: center; margin-top: 8px;
+  }
+  .tack-badge.port { color: var(--port); border-color: var(--port); }
+  .tack-badge.starboard { color: var(--starboard); border-color: var(--starboard); }
+
+  .race-bar { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; }
+  .race-bar .race-clock { color: var(--accent-strong); font-weight: 500; letter-spacing: 0.04em; }
+  .race-bar .race-leg { color: var(--ink-dim); }
+  .race-bar .race-arrow { display: inline-block; color: var(--accent); transition: transform 0.2s ease; font-size: 13px; }
+  .race-bar .race-dist { color: var(--muted); }
+  .race-bar .conn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--starboard); margin-left: auto; }
+  .race-bar .conn-dot.bad { background: var(--danger); }
+
+  .fleet-card { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; }
+  .fleet-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; color: var(--ink-dim); }
+  .fleet-row .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .fleet-row .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fleet-row .st { color: var(--muted); }
+  .fleet-row.me .nm { color: var(--ink); font-weight: 600; }
+  .fleet-row .place { color: var(--accent-strong); min-width: 1.4em; text-align: right; }
+
+  .ocs-banner { border-color: var(--accent); background: rgba(219,168,90,0.16); color: #ffe8c2; }
+  .penalty-banner { border-color: var(--port); background: rgba(168,58,58,0.18); color: #ffd9d7; }
+  .penalty-banner .p-deg { font-variant-numeric: tabular-nums; margin-left: 4px; opacity: 0.85; }
+  .stall-banner {
+    align-self: center; background: rgba(226,114,111,0.16); border: 1px solid var(--port); color: #ffd9d7;
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; letter-spacing: 0.06em;
+    padding: 6px 14px; border-radius: 999px; opacity: 0; transform: translateY(-6px);
+    transition: opacity .2s ease, transform .2s ease;
+  }
+  .stall-banner.show { opacity: 1; transform: translateY(0); }
+
+  button.ghost {
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; letter-spacing: 0.05em;
+    background: var(--surface-alt); color: var(--ink-dim); border: 1px solid var(--border); border-radius: 7px;
+    padding: 7px 10px; cursor: pointer;
+  }
+  button.ghost.active { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+  button.ghost:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  .controls { display: flex; flex-direction: column; gap: 10px; }
+  .control-block { background: rgba(18,34,40,0.82); backdrop-filter: blur(6px); border: 1px solid var(--border); border-radius: 12px; padding: 8px 10px 10px; }
+  .control-label { display: flex; justify-content: space-between; align-items: center; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 4px; padding: 0 2px; }
+  .control-label b { color: var(--accent-strong); font-weight: 500; }
+  canvas.strip { display: block; width: 100%; border-radius: 8px; touch-action: none; }
+  #headingTape { height: 64px; }
+  #trimSlider { height: 46px; }
+  .legend { display: flex; gap: 14px; align-items: center; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10px; color: var(--muted); padding: 4px 2px 0; }
+  .legend .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+
+  /* ---- lobby overlay ---- */
+  #lobby {
+    position: fixed; inset: 0; z-index: 20;
+    background: radial-gradient(120% 100% at 50% 0%, #14282f 0%, #081217 100%);
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  #lobby.hide { display: none; }
+  .lobby-panel { width: min(420px, 100%); display: flex; flex-direction: column; gap: 16px; }
+  .lobby-title { font-family: "Fraunces", Georgia, serif; font-weight: 600; font-size: 26px; margin: 0; }
+  .lobby-sub { color: var(--muted); font-size: 13px; margin: -10px 0 0; }
+  .lobby-field label { display: block; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
+  .lobby-field input[type=text] {
+    width: 100%; background: var(--surface-alt); border: 1px solid var(--border); color: var(--ink);
+    border-radius: 8px; padding: 10px 12px; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px;
+  }
+  .link-row { display: flex; gap: 8px; }
+  .link-row input { flex: 1; }
+  .link-row button { flex: none; }
+  .roster-box { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .roster-box .rb-title { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 8px; }
+  #startBtn { width: 100%; padding: 13px; font-size: 13px; border-radius: 10px; }
+  .lobby-hint { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; color: var(--muted); text-align: center; }
+  .lobby-status { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; color: var(--accent-strong); }
+
+  @media (max-width: 480px) {
+    .card { padding: 8px 10px; }
+    .readouts { font-size: 11.5px; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="world"></canvas>
+
+<div id="lobby">
+  <div class="lobby-panel">
+    <div>
+      <p class="lobby-title">FinnRacing</p>
+      <p class="lobby-sub">Small-fleet racing, Finn-dinghy physics, real right-of-way rules.</p>
+    </div>
+    <div class="lobby-field">
+      <label>Your name</label>
+      <input type="text" id="nameInput" maxlength="16" placeholder="Sailor" autocomplete="off">
+    </div>
+    <div class="lobby-field">
+      <label>Share this link to invite others</label>
+      <div class="link-row">
+        <input type="text" id="linkInput" readonly>
+        <button class="ghost" id="copyLinkBtn" type="button">COPY</button>
+      </div>
+    </div>
+    <div class="roster-box">
+      <div class="rb-title">IN THIS ROOM (<span id="rosterCount">0</span>/<span id="rosterMax">6</span>)</div>
+      <div id="rosterList"></div>
+    </div>
+    <p class="lobby-status" id="lobbyStatus">connecting&hellip;</p>
+    <button class="ghost active" id="startBtn" type="button" disabled>WAITING FOR HOST</button>
+    <p class="lobby-hint">Boats already in the room can free-sail and get a feel for the wind before the start.</p>
+  </div>
+</div>
+
+<div class="hud">
+  <div class="top-stack">
+    <div class="top-bar">
+      <div class="card">
+        <p class="doc-title">FinnRacing</p>
+        <p class="doc-sub" id="roomLabel">room &mdash;</p>
+      </div>
+      <div class="card readouts" id="readouts">
+        <span class="lbl">wind</span><span class="val" id="rWind">&mdash;</span>
+        <span class="lbl">twa</span><span class="val" id="rTwa">&mdash;</span>
+        <span class="lbl">speed</span><span class="val" id="rSpeed">&mdash;</span>
+        <span class="lbl">heading</span><span class="val" id="rHeading">&mdash;</span>
+        <div class="tack-badge" id="tackBadge">&mdash;</div>
+      </div>
+    </div>
+
+    <div class="card race-bar" id="raceBar">
+      <span class="race-clock" id="raceClock">LOBBY</span>
+      <span class="race-leg" id="raceLeg"></span>
+      <span class="race-arrow" id="markArrow" aria-hidden="true">&uarr;</span>
+      <span class="race-dist" id="markDist">&mdash;</span>
+      <span class="conn-dot" id="connDot" title="connection"></span>
+    </div>
+
+    <div class="card fleet-card" id="fleetCard"></div>
+  </div>
+
+  <div class="stall-banner ocs-banner" id="ocsBanner">OCS &mdash; RETURN BEHIND THE LINE</div>
+  <div class="stall-banner" id="stallBanner">IN IRONS &mdash; NO DRIVE</div>
+  <div class="stall-banner penalty-banner" id="penaltyBanner">PENALTY TURN &mdash; <span id="penaltyRule"></span><span class="p-deg" id="penaltyDeg"></span></div>
+
+  <div class="controls">
+    <div class="control-block">
+      <div class="control-label">
+        <span>HEADING &mdash; drag the bug to set a target</span>
+        <b id="tapeReadout">&mdash;</b>
+      </div>
+      <canvas class="strip" id="headingTape"></canvas>
+      <div class="legend">
+        <span><span class="dot" style="background:var(--accent)"></span>wind</span>
+        <span><span class="dot" style="background:var(--ink)"></span>heading</span>
+        <span><span class="dot" style="background:var(--danger)"></span>target</span>
+        <span>shaded &middot; no&#8209;go zone</span>
+      </div>
+    </div>
+
+    <div class="control-block">
+      <div class="control-label">
+        <span>SAIL TRIM</span>
+        <span style="display:flex; gap:8px; align-items:center;">
+          <b id="trimReadout">&mdash;</b>
+          <button class="ghost active" id="autoTrimBtn" type="button">AUTO</button>
+        </span>
+      </div>
+      <canvas class="strip" id="trimSlider"></canvas>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="./client.js"></script>
+</body>
+</html>

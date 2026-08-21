@@ -1,0 +1,15 @@
+name = "finnracing"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[durable_objects.bindings]]
+name = "RACE_ROOM"
+class_name = "RaceRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RaceRoom"]

@@ -1,0 +1,577 @@
+import {
+  D2R, clamp, lerp, wrap360, wrap180,
+  NO_GO_HALF, TRIM_MAX_ERROR, PX_PER_METER,
+  PIN_X, BOAT_END_X, START_Y, WINDWARD_MARK, PRESTART_SECONDS,
+  idealTrimAngle, stepBoatKinematics, freshBoatState,
+  dist, bearingTo, currentMarkFor
+} from "./physics-client.js";
+
+const TAU = Math.PI * 2;
+const RENDER_DELAY_MS = 150; // buffered-interpolation delay applied to *other* boats
+
+// ---------- room id / shareable link ----------
+function genRoomId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(5));
+  return Array.from(bytes, b => (b % 36).toString(36)).join("");
+}
+const params = new URLSearchParams(location.search);
+let roomId = params.get("room");
+if (!roomId) {
+  roomId = genRoomId();
+  params.set("room", roomId);
+  history.replaceState(null, "", location.pathname + "?" + params.toString());
+}
+document.getElementById("linkInput").value = location.href;
+document.getElementById("roomLabel").textContent = "room " + roomId;
+
+// ---------- state ----------
+let ws = null, wsRetries = 0, intentionalClose = false;
+let myId = null, myBoatIndex = null, myColor = "#e2ece9", isHost = false, maxBoats = 6;
+let myInitialized = false;
+let authoritative = null;
+const myBoat = freshBoatState(0);
+let myRace = { status: "prestart", leg: 1, ocs: false, finishTime: null, place: null, penalty: { active: false, turnedDeg: 0, rule: null } };
+let wind = { dir: 0, speed: 10 };
+let roomStatus = "lobby";
+let raceClock = 0;
+let lastSnapshotBoats = [];
+const remoteBuffers = {}; // boatIndex -> [{tRecv, worldX, worldY, headingDeg, speedKnots, tackSign, name, color, connected, race}]
+const wakeMap = {}; // boatIndex -> [{x,y,age}]
+
+// ---------- DOM ----------
+const nameInput = document.getElementById("nameInput");
+const linkInput = document.getElementById("linkInput");
+const copyLinkBtn = document.getElementById("copyLinkBtn");
+const rosterList = document.getElementById("rosterList");
+const rosterCount = document.getElementById("rosterCount");
+const rosterMax = document.getElementById("rosterMax");
+const lobbyStatus = document.getElementById("lobbyStatus");
+const startBtn = document.getElementById("startBtn");
+const lobby = document.getElementById("lobby");
+const connDot = document.getElementById("connDot");
+
+nameInput.value = localStorage.getItem("finnracing_name") || "";
+nameInput.addEventListener("change", () => {
+  const nm = nameInput.value.trim().slice(0, 16);
+  localStorage.setItem("finnracing_name", nm);
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "rename", name: nm || "Sailor" }));
+});
+copyLinkBtn.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(linkInput.value);
+    copyLinkBtn.textContent = "COPIED";
+    setTimeout(() => { copyLinkBtn.textContent = "COPY"; }, 1200);
+  } catch {
+    linkInput.select();
+    document.execCommand("copy");
+  }
+});
+startBtn.addEventListener("click", () => {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "start" }));
+});
+
+function setConnDot(ok) { connDot.classList.toggle("bad", !ok); }
+
+// ---------- networking ----------
+function connect() {
+  const proto = location.protocol === "https:" ? "wss://" : "ws://";
+  const name = (nameInput.value || "Sailor").trim().slice(0, 16);
+  const url = proto + location.host + "/ws/" + encodeURIComponent(roomId) + "?name=" + encodeURIComponent(name);
+  ws = new WebSocket(url);
+  ws.addEventListener("open", () => { wsRetries = 0; setConnDot(true); lobbyStatus.textContent = "connected"; });
+  ws.addEventListener("message", (evt) => { try { onServerMessage(JSON.parse(evt.data)); } catch { /* ignore malformed */ } });
+  ws.addEventListener("close", () => {
+    setConnDot(false);
+    if (intentionalClose) return;
+    wsRetries++;
+    const delay = Math.min(1500 * wsRetries, 6000);
+    lobbyStatus.textContent = "disconnected — reconnecting…";
+    setTimeout(connect, delay);
+  });
+  ws.addEventListener("error", () => { try { ws.close(); } catch { /* already closing */ } });
+}
+connect();
+
+setInterval(() => {
+  if (ws && ws.readyState === WebSocket.OPEN && myInitialized) {
+    ws.send(JSON.stringify({
+      t: "input", targetHeadingDeg: myBoat.targetHeadingDeg,
+      autoTrim: myBoat.autoTrim, trimAngleDeg: myBoat.trimAngleDeg
+    }));
+  }
+}, 66);
+
+function onServerMessage(msg) {
+  if (msg.t === "full") {
+    lobbyStatus.textContent = "room is full (" + maxBoats + "/" + maxBoats + ") — waiting for a seat to free up";
+  } else if (msg.t === "welcome") {
+    myId = msg.youId; myBoatIndex = msg.boatIndex; myColor = msg.color; isHost = msg.isHost; maxBoats = msg.maxBoats;
+    rosterMax.textContent = maxBoats;
+  } else if (msg.t === "roster") {
+    roomStatus = msg.roomStatus;
+    renderRoster(msg.roster, msg.hostId);
+  } else if (msg.t === "start_countdown") {
+    lobby.classList.add("hide");
+  } else if (msg.t === "snapshot") {
+    onSnapshot(msg);
+  }
+}
+
+function renderRoster(roster, hostId) {
+  rosterCount.textContent = roster.filter(r => r.connected).length;
+  rosterList.innerHTML = "";
+  roster.forEach(r => {
+    const row = document.createElement("div");
+    row.className = "fleet-row" + (r.boatIndex === myBoatIndex ? " me" : "");
+    const dot = document.createElement("span");
+    dot.className = "dot"; dot.style.background = r.color; dot.style.opacity = r.connected ? "1" : "0.35";
+    const nm = document.createElement("span");
+    nm.className = "nm";
+    nm.textContent = r.name + (r.connected ? "" : " (left)");
+    row.appendChild(dot); row.appendChild(nm);
+    rosterList.appendChild(row);
+  });
+  isHost = myId && myId === hostId;
+  if (roomStatus === "lobby") {
+    startBtn.disabled = !isHost;
+    startBtn.textContent = isHost ? "START RACE" : "WAITING FOR HOST";
+    startBtn.classList.toggle("active", isHost);
+  } else {
+    lobby.classList.add("hide");
+  }
+}
+
+function onSnapshot(msg) {
+  wind.dir = msg.wind.dir; wind.speed = msg.wind.speed;
+  roomStatus = msg.roomStatus; raceClock = msg.raceClock;
+  lastSnapshotBoats = msg.boats;
+  if (roomStatus !== "lobby") lobby.classList.add("hide");
+  const now = performance.now();
+  for (const b of msg.boats) {
+    if (b.boatIndex === myBoatIndex) {
+      if (!myInitialized) {
+        myBoat.worldX = b.worldX; myBoat.worldY = b.worldY;
+        myBoat.headingDeg = b.headingDeg; myBoat.targetHeadingDeg = b.headingDeg;
+        myBoat.speedKnots = b.speedKnots; myBoat.tackSign = b.tackSign;
+        myInitialized = true;
+      }
+      authoritative = b;
+      myRace = b.race;
+    } else {
+      let buf = remoteBuffers[b.boatIndex];
+      if (!buf) buf = remoteBuffers[b.boatIndex] = [];
+      buf.push({
+        tRecv: now, worldX: b.worldX, worldY: b.worldY, headingDeg: b.headingDeg,
+        speedKnots: b.speedKnots, tackSign: b.tackSign, name: b.name, color: b.color,
+        connected: b.connected, race: b.race
+      });
+      while (buf.length > 12) buf.shift();
+    }
+  }
+}
+
+// ---------- local prediction + server reconciliation for our own boat ----------
+function stepLocalPrediction(dt) {
+  if (!myInitialized) return { twaSigned: 0, absTwa: 0, inNoGo: false, drifting: false };
+  if (myRace.penalty && myRace.penalty.active) {
+    myBoat.targetHeadingDeg = wrap360(myBoat.headingDeg + 45); // mirrors the server's forced-turn override
+  }
+  const info = stepBoatKinematics(myBoat, wind, dt);
+  if (authoritative) {
+    const dx = authoritative.worldX - myBoat.worldX, dy = authoritative.worldY - myBoat.worldY;
+    const d = Math.hypot(dx, dy);
+    if (d > 4) {
+      myBoat.worldX = authoritative.worldX; myBoat.worldY = authoritative.worldY;
+      myBoat.headingDeg = authoritative.headingDeg; myBoat.speedKnots = authoritative.speedKnots;
+    } else if (d > 0.03) {
+      const pull = clamp(dt / 0.3, 0, 1);
+      myBoat.worldX += dx * pull; myBoat.worldY += dy * pull;
+    }
+    myBoat.tackSign = authoritative.tackSign;
+  }
+  return info;
+}
+
+function getRemoteRenderState(boatIndex) {
+  const buf = remoteBuffers[boatIndex];
+  if (!buf || buf.length === 0) return null;
+  const renderT = performance.now() - RENDER_DELAY_MS;
+  if (renderT <= buf[0].tRecv) return buf[0];
+  const last = buf[buf.length - 1];
+  if (renderT >= last.tRecv) return last;
+  for (let i = 0; i < buf.length - 1; i++) {
+    const a = buf[i], b = buf[i + 1];
+    if (renderT >= a.tRecv && renderT <= b.tRecv) {
+      const span = b.tRecv - a.tRecv;
+      const t = span > 0 ? (renderT - a.tRecv) / span : 0;
+      return {
+        worldX: lerp(a.worldX, b.worldX, t), worldY: lerp(a.worldY, b.worldY, t),
+        headingDeg: a.headingDeg + wrap180(b.headingDeg - a.headingDeg) * t,
+        speedKnots: lerp(a.speedKnots, b.speedKnots, t),
+        tackSign: b.tackSign, name: b.name, color: b.color, connected: b.connected, race: b.race
+      };
+    }
+  }
+  return last;
+}
+
+// ---------- input: heading tape ----------
+const tapeCanvas = document.getElementById("headingTape");
+const tapeCtx = tapeCanvas.getContext("2d");
+let tapeDrag = false;
+function tapePxPerDeg() { return tapeCanvas.clientWidth / 140; }
+function tapePointerToHeading(clientX) {
+  const rect = tapeCanvas.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  return wrap360(myBoat.headingDeg + (clientX - cx) / tapePxPerDeg());
+}
+tapeCanvas.addEventListener("pointerdown", (e) => {
+  tapeCanvas.setPointerCapture(e.pointerId);
+  tapeDrag = true;
+  myBoat.targetHeadingDeg = tapePointerToHeading(e.clientX);
+});
+tapeCanvas.addEventListener("pointermove", (e) => { if (tapeDrag) myBoat.targetHeadingDeg = tapePointerToHeading(e.clientX); });
+function endTapeDrag() { tapeDrag = false; }
+tapeCanvas.addEventListener("pointerup", endTapeDrag);
+tapeCanvas.addEventListener("pointercancel", endTapeDrag);
+
+function drawTape() {
+  const w = tapeCanvas.clientWidth, h = tapeCanvas.clientHeight;
+  const dpr = window.devicePixelRatio || 1;
+  if (tapeCanvas.width !== w * dpr || tapeCanvas.height !== h * dpr) { tapeCanvas.width = w * dpr; tapeCanvas.height = h * dpr; }
+  tapeCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  tapeCtx.clearRect(0, 0, w, h);
+  tapeCtx.fillStyle = "#0e2027"; tapeCtx.fillRect(0, 0, w, h);
+
+  const cx = w / 2, pxPerDeg = w / 140;
+  function xFor(deg) { return cx + wrap180(deg - myBoat.headingDeg) * pxPerDeg; }
+
+  const loX = xFor(wind.dir - NO_GO_HALF), hiX = xFor(wind.dir + NO_GO_HALF);
+  tapeCtx.fillStyle = "rgba(226,114,111,0.24)";
+  tapeCtx.fillRect(Math.min(loX, hiX), 0, Math.abs(hiX - loX), h);
+
+  tapeCtx.strokeStyle = "rgba(226,236,233,0.28)";
+  tapeCtx.fillStyle = "rgba(183,199,197,0.85)";
+  tapeCtx.font = "10px 'IBM Plex Mono', monospace";
+  tapeCtx.textAlign = "center";
+  for (let d = -180; d <= 180; d += 10) {
+    const heading = wrap360(myBoat.headingDeg + d);
+    const x = xFor(heading);
+    if (x < -10 || x > w + 10) continue;
+    const major = Math.round(heading) % 30 === 0;
+    tapeCtx.beginPath(); tapeCtx.moveTo(x, h - (major ? 22 : 14)); tapeCtx.lineTo(x, h);
+    tapeCtx.lineWidth = major ? 1.4 : 1; tapeCtx.stroke();
+    if (major) tapeCtx.fillText(Math.round(heading) + "°", x, h - 26);
+  }
+
+  const wx = xFor(wind.dir);
+  tapeCtx.fillStyle = "#dba85a";
+  tapeCtx.beginPath(); tapeCtx.moveTo(wx, 6); tapeCtx.lineTo(wx - 6, 16); tapeCtx.lineTo(wx + 6, 16); tapeCtx.closePath(); tapeCtx.fill();
+
+  const tx = clamp(xFor(myBoat.targetHeadingDeg), 8, w - 8);
+  tapeCtx.strokeStyle = "#e2726f"; tapeCtx.lineWidth = 2.5;
+  tapeCtx.beginPath(); tapeCtx.moveTo(tx, 0); tapeCtx.lineTo(tx, h); tapeCtx.stroke();
+
+  tapeCtx.strokeStyle = "#e2ece9"; tapeCtx.lineWidth = 2;
+  tapeCtx.beginPath(); tapeCtx.moveTo(cx, 0); tapeCtx.lineTo(cx, h); tapeCtx.stroke();
+}
+
+// ---------- input: trim slider ----------
+const trimCanvas = document.getElementById("trimSlider");
+const trimCtx = trimCanvas.getContext("2d");
+let trimDrag = false;
+const autoTrimBtn = document.getElementById("autoTrimBtn");
+autoTrimBtn.addEventListener("click", () => {
+  myBoat.autoTrim = !myBoat.autoTrim;
+  autoTrimBtn.classList.toggle("active", myBoat.autoTrim);
+  autoTrimBtn.textContent = myBoat.autoTrim ? "AUTO" : "MANUAL";
+});
+function trimPointerToAngle(clientX) {
+  const rect = trimCanvas.getBoundingClientRect();
+  return clamp((clientX - rect.left) / rect.width, 0, 1) * 90;
+}
+trimCanvas.addEventListener("pointerdown", (e) => {
+  if (myBoat.autoTrim) return;
+  trimCanvas.setPointerCapture(e.pointerId);
+  trimDrag = true;
+  myBoat.trimAngleDeg = trimPointerToAngle(e.clientX);
+});
+trimCanvas.addEventListener("pointermove", (e) => { if (trimDrag) myBoat.trimAngleDeg = trimPointerToAngle(e.clientX); });
+function endTrimDrag() { trimDrag = false; }
+trimCanvas.addEventListener("pointerup", endTrimDrag);
+trimCanvas.addEventListener("pointercancel", endTrimDrag);
+
+function currentTWA() { return wrap180(wind.dir - myBoat.headingDeg); }
+
+function drawTrim() {
+  const w = trimCanvas.clientWidth, h = trimCanvas.clientHeight;
+  const dpr = window.devicePixelRatio || 1;
+  if (trimCanvas.width !== w * dpr || trimCanvas.height !== h * dpr) { trimCanvas.width = w * dpr; trimCanvas.height = h * dpr; }
+  trimCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  trimCtx.clearRect(0, 0, w, h);
+  trimCtx.fillStyle = "#0e2027"; trimCtx.fillRect(0, 0, w, h);
+
+  const trackY = h / 2, pad = 10;
+  function xFor(deg) { return pad + (deg / 90) * (w - pad * 2); }
+
+  const absTwa = Math.abs(currentTWA());
+  const ideal = idealTrimAngle(absTwa);
+  const loX = xFor(clamp(ideal - TRIM_MAX_ERROR, 0, 90));
+  const hiX = xFor(clamp(ideal + TRIM_MAX_ERROR, 0, 90));
+  trimCtx.fillStyle = myBoat.autoTrim ? "rgba(95,194,140,0.10)" : "rgba(95,194,140,0.20)";
+  trimCtx.fillRect(loX, trackY - 12, hiX - loX, 24);
+
+  trimCtx.strokeStyle = "rgba(226,236,233,0.25)"; trimCtx.lineWidth = 2;
+  trimCtx.beginPath(); trimCtx.moveTo(pad, trackY); trimCtx.lineTo(w - pad, trackY); trimCtx.stroke();
+
+  const ix = xFor(ideal);
+  trimCtx.strokeStyle = "#5fc28c"; trimCtx.lineWidth = 2;
+  trimCtx.beginPath(); trimCtx.moveTo(ix, trackY - 14); trimCtx.lineTo(ix, trackY + 14); trimCtx.stroke();
+
+  const hx = xFor(myBoat.autoTrim ? ideal : myBoat.trimAngleDeg);
+  trimCtx.fillStyle = myBoat.autoTrim ? "rgba(219,168,90,0.45)" : "#dba85a";
+  trimCtx.beginPath(); trimCtx.arc(hx, trackY, 8, 0, TAU); trimCtx.fill();
+}
+
+// ---------- world canvas ----------
+const world = document.getElementById("world");
+const wctx = world.getContext("2d");
+function resizeWorld() {
+  const dpr = window.devicePixelRatio || 1;
+  world.width = innerWidth * dpr; world.height = innerHeight * dpr;
+  world.style.width = innerWidth + "px"; world.style.height = innerHeight + "px";
+  wctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener("resize", resizeWorld);
+resizeWorld();
+
+function drawBoatShape(originX, originY, headingDeg, hullColor, sailLean, tackSign) {
+  wctx.save();
+  wctx.translate(originX, originY);
+  wctx.rotate(headingDeg * D2R);
+  wctx.fillStyle = hullColor;
+  wctx.beginPath();
+  wctx.moveTo(0, -20); wctx.lineTo(9, 14); wctx.lineTo(0, 8); wctx.lineTo(-9, 14);
+  wctx.closePath(); wctx.fill();
+  wctx.strokeStyle = "rgba(226,236,233,0.55)"; wctx.lineWidth = 2;
+  wctx.beginPath(); wctx.moveTo(0, -14); wctx.lineTo((tackSign > 0 ? -1 : 1) * sailLean, 6); wctx.stroke();
+  wctx.restore();
+}
+
+const lastWakeAt = {}; // boatIndex -> performance.now() ms, throttles emission independent of frame rate
+function maybePushWake(boatIndex, x, y, speedKnots) {
+  if (Math.abs(speedKnots) <= 0.15) return;
+  const now = performance.now();
+  const last = lastWakeAt[boatIndex] || 0;
+  const interval = clamp(320 - Math.abs(speedKnots) * 18, 90, 320);
+  if (now - last < interval) return;
+  lastWakeAt[boatIndex] = now;
+  let arr = wakeMap[boatIndex];
+  if (!arr) arr = wakeMap[boatIndex] = [];
+  arr.push({ x, y, age: 0 });
+}
+
+function drawWorld(info, dt) {
+  const w = innerWidth, h = innerHeight;
+  const cx = w / 2, cy = h / 2;
+
+  const g = wctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, "#0e2530"); g.addColorStop(1, "#08151b");
+  wctx.fillStyle = g; wctx.fillRect(0, 0, w, h);
+
+  const tile = 46;
+  const ox = (-myBoat.worldX * PX_PER_METER) % tile;
+  const oy = (-myBoat.worldY * PX_PER_METER) % tile;
+  wctx.strokeStyle = "rgba(255,255,255,0.035)"; wctx.lineWidth = 1;
+  for (let x = ox - tile; x < w + tile; x += tile) { wctx.beginPath(); wctx.moveTo(x, 0); wctx.lineTo(x, h); wctx.stroke(); }
+  for (let y = oy - tile; y < h + tile; y += tile) { wctx.beginPath(); wctx.moveTo(0, y); wctx.lineTo(w, y); wctx.stroke(); }
+
+  function toScreen(wx, wy) { return [cx + (wx - myBoat.worldX) * PX_PER_METER, cy + (wy - myBoat.worldY) * PX_PER_METER]; }
+
+  // wake, own boat
+  maybePushWake(myBoatIndex, myBoat.worldX, myBoat.worldY, myBoat.speedKnots);
+  for (const key in wakeMap) {
+    const arr = wakeMap[key];
+    for (let i = arr.length - 1; i >= 0; i--) {
+      arr[i].age += dt;
+      if (arr[i].age > 6) { arr.splice(i, 1); continue; }
+      const [sx, sy] = toScreen(arr[i].x, arr[i].y);
+      const a = clamp(1 - arr[i].age / 6, 0, 1) * 0.3;
+      wctx.fillStyle = "rgba(226,236,233," + a.toFixed(3) + ")";
+      wctx.beginPath(); wctx.arc(sx, sy, 2.2, 0, TAU); wctx.fill();
+    }
+  }
+
+  // wind arrow
+  wctx.save();
+  wctx.translate(cx, 64);
+  wctx.rotate(wind.dir * D2R);
+  wctx.strokeStyle = "#dba85a"; wctx.fillStyle = "#dba85a"; wctx.lineWidth = 2;
+  wctx.beginPath(); wctx.moveTo(0, -26); wctx.lineTo(0, 22); wctx.stroke();
+  wctx.beginPath(); wctx.moveTo(0, 26); wctx.lineTo(-6, 14); wctx.lineTo(6, 14); wctx.closePath(); wctx.fill();
+  wctx.restore();
+
+  // start/finish line + windward mark
+  const anyOcs = lastSnapshotBoats.some(b => b.race.ocs);
+  const [pinSx, pinSy] = toScreen(PIN_X, START_Y);
+  const [endSx, endSy] = toScreen(BOAT_END_X, START_Y);
+  wctx.strokeStyle = anyOcs ? "#e2726f" : "rgba(226,236,233,0.5)";
+  wctx.lineWidth = 1.6; wctx.setLineDash([5, 5]);
+  wctx.beginPath(); wctx.moveTo(pinSx, pinSy); wctx.lineTo(endSx, endSy); wctx.stroke();
+  wctx.setLineDash([]);
+  [[pinSx, pinSy], [endSx, endSy]].forEach(([sx, sy]) => {
+    wctx.fillStyle = "#f0c581"; wctx.beginPath(); wctx.arc(sx, sy, 4, 0, TAU); wctx.fill();
+  });
+  const [mSx, mSy] = toScreen(WINDWARD_MARK.x, WINDWARD_MARK.y);
+  wctx.fillStyle = "#dba85a"; wctx.beginPath(); wctx.arc(mSx, mSy, 5, 0, TAU); wctx.fill();
+  wctx.strokeStyle = "rgba(219,168,90,0.4)"; wctx.lineWidth = 1;
+  wctx.beginPath(); wctx.arc(mSx, mSy, 8 * PX_PER_METER, 0, TAU); wctx.stroke();
+
+  // other boats
+  for (const key in remoteBuffers) {
+    const r = getRemoteRenderState(Number(key));
+    if (!r || !r.connected) continue;
+    const [sx, sy] = toScreen(r.worldX, r.worldY);
+    if (sx < -60 || sx > w + 60 || sy < -60 || sy > h + 60) continue; // off-screen, skip label work
+    maybePushWake(Number(key), r.worldX, r.worldY, r.speedKnots);
+    drawBoatShape(sx, sy, r.headingDeg, r.color, 8, r.tackSign);
+    wctx.fillStyle = r.color; wctx.font = "10.5px 'IBM Plex Mono', monospace"; wctx.textAlign = "center";
+    wctx.fillText(r.name + " · " + r.speedKnots.toFixed(1) + "kt", sx, sy - 28);
+    if (r.race && r.race.penalty && r.race.penalty.active) {
+      wctx.fillStyle = "rgba(226,120,116,0.95)";
+      wctx.fillText("PENALTY " + Math.round(r.race.penalty.turnedDeg) + "°/360°", sx, sy - 40);
+    }
+  }
+
+  // own boat, screen-fixed
+  const hullColor = info.drifting ? "#e2726f" : (info.inNoGo ? "#f0c581" : myColor);
+  const sailLean = myBoat.autoTrim ? 8 : (myBoat.trimAngleDeg / 90) * 22;
+  drawBoatShape(cx, cy, myBoat.headingDeg, hullColor, sailLean, myBoat.tackSign);
+  wctx.fillStyle = "rgba(226,236,233,0.75)"; wctx.font = "10.5px 'IBM Plex Mono', monospace"; wctx.textAlign = "center";
+  wctx.fillText("YOU", cx, cy - 28);
+}
+
+// ---------- HUD text ----------
+const elWind = document.getElementById("rWind");
+const elTwa = document.getElementById("rTwa");
+const elSpeed = document.getElementById("rSpeed");
+const elHeading = document.getElementById("rHeading");
+const elTack = document.getElementById("tackBadge");
+const elStall = document.getElementById("stallBanner");
+const elOcs = document.getElementById("ocsBanner");
+const elPenalty = document.getElementById("penaltyBanner");
+const elPenaltyRule = document.getElementById("penaltyRule");
+const elPenaltyDeg = document.getElementById("penaltyDeg");
+const elTapeReadout = document.getElementById("tapeReadout");
+const elTrimReadout = document.getElementById("trimReadout");
+const elRaceClock = document.getElementById("raceClock");
+const elRaceLeg = document.getElementById("raceLeg");
+const elMarkArrow = document.getElementById("markArrow");
+const elMarkDist = document.getElementById("markDist");
+const elFleet = document.getElementById("fleetCard");
+
+function fmtClock(sec) {
+  sec = Math.max(0, Math.ceil(sec));
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return m + ":" + (s < 10 ? "0" : "") + s;
+}
+
+function updateMarkPointer(mark) {
+  elMarkArrow.style.opacity = 1;
+  const bearing = bearingTo(myBoat.worldX, myBoat.worldY, mark.x, mark.y);
+  const rel = wrap180(bearing - myBoat.headingDeg);
+  elMarkArrow.style.transform = "rotate(" + rel + "deg)";
+  elMarkDist.textContent = Math.round(dist(myBoat.worldX, myBoat.worldY, mark.x, mark.y)) + "m";
+}
+
+function updateRaceHud() {
+  if (roomStatus === "lobby" || !myInitialized) {
+    elRaceClock.textContent = "LOBBY"; elRaceLeg.textContent = "waiting to start";
+    elMarkArrow.style.opacity = 0; elMarkDist.textContent = "";
+    elOcs.classList.remove("show");
+    return;
+  }
+  if (myRace.status === "finished") {
+    const place = myRace.place === 1 ? "1st" : myRace.place === 2 ? "2nd" : myRace.place === 3 ? "3rd" : (myRace.place + "th");
+    elRaceClock.textContent = "FINISHED — " + place + " · " + (myRace.finishTime || 0).toFixed(1) + "s";
+    elRaceLeg.textContent = "next race starts automatically";
+    elMarkArrow.style.opacity = 0; elMarkDist.textContent = "";
+  } else if (raceClock < PRESTART_SECONDS) {
+    elRaceClock.textContent = "PRESTART · " + fmtClock(PRESTART_SECONDS - raceClock);
+    elRaceLeg.textContent = myRace.ocs ? "OCS — get back below the line" : "→ start line";
+    updateMarkPointer({ x: (PIN_X + BOAT_END_X) / 2, y: START_Y });
+  } else {
+    elRaceClock.textContent = "RACE · " + fmtClock(raceClock - PRESTART_SECONDS);
+    elRaceLeg.textContent = myRace.leg === 1 ? "→ windward mark" : "→ finish";
+    updateMarkPointer(currentMarkFor(myRace.leg));
+  }
+  elOcs.classList.toggle("show", myRace.ocs && raceClock < PRESTART_SECONDS);
+  elPenalty.classList.toggle("show", myRace.penalty.active);
+  if (myRace.penalty.active) {
+    elPenaltyRule.textContent = myRace.penalty.rule;
+    elPenaltyDeg.textContent = " " + Math.round(myRace.penalty.turnedDeg) + "°/360°";
+  }
+}
+
+function statusLabel(b) {
+  if (b.race.penalty.active) return "PENALTY " + Math.round(b.race.penalty.turnedDeg) + "°";
+  if (b.race.status === "finished") return "FINISHED " + (b.race.place ? "#" + b.race.place : "");
+  if (roomStatus === "lobby") return "lobby";
+  if (raceClock < PRESTART_SECONDS) return b.race.ocs ? "OCS" : "prestart";
+  return "leg " + b.race.leg;
+}
+
+function updateFleetCard() {
+  const boats = lastSnapshotBoats.slice().sort((a, b) => {
+    const pa = a.race.place, pb = b.race.place;
+    if (pa && pb) return pa - pb;
+    if (pa) return -1;
+    if (pb) return 1;
+    return a.boatIndex - b.boatIndex;
+  });
+  elFleet.innerHTML = "";
+  boats.forEach(b => {
+    const row = document.createElement("div");
+    row.className = "fleet-row" + (b.boatIndex === myBoatIndex ? " me" : "");
+    row.innerHTML =
+      '<span class="place">' + (b.race.place || "") + '</span>' +
+      '<span class="dot" style="background:' + b.color + '; opacity:' + (b.connected ? 1 : 0.35) + '"></span>' +
+      '<span class="nm">' + escapeHtml(b.name) + (b.connected ? "" : " (left)") + '</span>' +
+      '<span class="st">' + statusLabel(b) + '</span>';
+    elFleet.appendChild(row);
+  });
+}
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+function updateHud(info) {
+  elWind.textContent = wind.speed.toFixed(1) + " kt @ " + Math.round(wind.dir) + "°";
+  elTwa.textContent = Math.round(info.absTwa) + "°" + (info.inNoGo ? " (pinching)" : "");
+  elTwa.classList.toggle("warn", info.drifting);
+  elSpeed.textContent = myBoat.speedKnots.toFixed(1) + " kt" + (info.drifting && myBoat.speedKnots < -0.05 ? " (sternway)" : "");
+  elSpeed.classList.toggle("warn", info.drifting);
+  elHeading.textContent = Math.round(myBoat.headingDeg) + "°";
+  elTack.textContent = myBoat.tackSign > 0 ? "STARBOARD TACK" : "PORT TACK";
+  elTack.className = "tack-badge " + (myBoat.tackSign > 0 ? "starboard" : "port");
+  elStall.textContent = myBoat.speedKnots < -0.05 ? "IN IRONS — DRIFTING BACKWARD" : "IN IRONS — NO DRIVE";
+  elStall.classList.toggle("show", info.drifting);
+  elTapeReadout.textContent = Math.round(myBoat.headingDeg) + "° → " + Math.round(myBoat.targetHeadingDeg) + "°";
+  elTrimReadout.textContent = myBoat.autoTrim ? "auto" : Math.round(myBoat.trimAngleDeg) + "° · " + Math.round(myBoat.trimEfficiency01 * 100) + "%";
+}
+
+// ---------- main loop ----------
+let lastFrameT = performance.now();
+function frame(now) {
+  const dt = clamp((now - lastFrameT) / 1000, 0, 1 / 20);
+  lastFrameT = now;
+  const info = stepLocalPrediction(dt);
+  drawWorld(info, dt);
+  drawTape();
+  drawTrim();
+  updateHud(info);
+  updateRaceHud();
+  updateFleetCard();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+window.addEventListener("beforeunload", () => { intentionalClose = true; try { ws && ws.close(); } catch { /* noop */ } });
