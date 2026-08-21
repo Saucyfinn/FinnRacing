@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>FinnRacing &mdash; Online</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230c1a1f'/%3E%3Cpath d='M16 5 L24 24 L16 21 L8 24 Z' fill='%23dba85a'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 
 <style>
@@ -143,6 +144,33 @@
   .lobby-hint { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; color: var(--muted); text-align: center; }
   .lobby-status { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; color: var(--accent-strong); }
 
+  .venue-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .venue-row input[type=number] {
+    width: 72px; background: var(--surface-alt); border: 1px solid var(--border); color: var(--ink);
+    border-radius: 8px; padding: 8px 10px; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px;
+  }
+  .inline-lbl { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.06em; color: var(--muted); }
+  .venue-row .ghost { margin-left: auto; }
+  .venue-status { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; color: var(--muted); margin: 8px 0 0; }
+
+  .zoom-group { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+  .zoom-btn {
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; line-height: 1;
+    background: var(--surface-alt); color: var(--ink-dim); border: 1px solid var(--border);
+    border-radius: 6px; width: 26px; height: 24px; cursor: pointer; padding: 0;
+  }
+  .zoom-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .zoom-readout { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 3.4em; text-align: center; }
+
+  .attribution {
+    position: fixed; right: 8px; bottom: 4px; z-index: 5;
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 9.5px;
+    color: rgba(226,236,233,0.55); text-decoration: none;
+    background: rgba(8,21,27,0.55); padding: 2px 6px; border-radius: 4px;
+    display: none;
+  }
+  .attribution.show { display: block; }
+
   @media (max-width: 480px) {
     .card { padding: 8px 10px; }
     .readouts { font-size: 11.5px; }
@@ -169,6 +197,20 @@
         <input type="text" id="linkInput" readonly>
         <button class="ghost" id="copyLinkBtn" type="button">COPY</button>
       </div>
+    </div>
+    <div class="lobby-field">
+      <label>Course position &mdash; paste coordinates from any map</label>
+      <div class="link-row">
+        <input type="text" id="venueInput" placeholder="-41.28650, 174.77620" autocomplete="off" inputmode="decimal">
+        <button class="ghost" id="venueLocateBtn" type="button" title="Use my current location">📍</button>
+      </div>
+      <div class="venue-row">
+        <label class="inline-lbl">wind from</label>
+        <input type="number" id="venueBearing" min="0" max="359" step="1" placeholder="230">
+        <span class="inline-lbl">&deg;T</span>
+        <button class="ghost" id="venueApplyBtn" type="button">SET COURSE</button>
+      </div>
+      <p class="venue-status" id="venueStatus">open water &mdash; set a position to race on the real map</p>
     </div>
     <div class="roster-box">
       <div class="rb-title">IN THIS ROOM (<span id="rosterCount">0</span>/<span id="rosterMax">6</span>)</div>
@@ -201,6 +243,11 @@
       <span class="race-leg" id="raceLeg"></span>
       <span class="race-arrow" id="markArrow" aria-hidden="true">&uarr;</span>
       <span class="race-dist" id="markDist">&mdash;</span>
+      <span class="zoom-group">
+        <button class="zoom-btn" id="zoomOutBtn" type="button" aria-label="Zoom out">&minus;</button>
+        <span class="zoom-readout" id="zoomReadout">&mdash;</span>
+        <button class="zoom-btn" id="zoomInBtn" type="button" aria-label="Zoom in">+</button>
+      </span>
       <span class="conn-dot" id="connDot" title="connection"></span>
     </div>
 
@@ -238,6 +285,8 @@
     </div>
   </div>
 </div>
+
+<a class="attribution" id="attribution" href="https://basemaps.linz.govt.nz/" target="_blank" rel="noopener">Imagery &copy; LINZ &middot; CC BY 4.0</a>
 
 <script type="module" src="./client.js"></script>
 </body>

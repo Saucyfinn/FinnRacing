@@ -39,6 +39,47 @@ To use a custom domain instead of `*.workers.dev`, add a `routes` entry to
 `wrangler.toml` or attach one from the Cloudflare dashboard after the first
 deploy.
 
+## Satellite imagery (LINZ Basemaps)
+
+The course can sit on real water, with NZ aerial imagery underneath it. This is
+optional — with no key configured the game falls back to the abstract water it
+had before, and nothing else changes.
+
+1. Get a free API key from [LINZ Basemaps](https://basemaps.linz.govt.nz/) (the
+   imagery is published under CC BY 4.0).
+2. Store it as a Worker secret so it never reaches the browser:
+
+```bash
+npx wrangler secret put LINZ_API_KEY
+```
+
+Tiles are served through this Worker's own `/tiles/{z}/{x}/{y}.webp` route
+rather than fetched directly from LINZ. That keeps the key server-side and lets
+Cloudflare's edge cache absorb repeat tile requests, so a fleet racing the same
+patch of water hits LINZ once rather than once per boat. Required attribution is
+rendered in the corner of the map whenever imagery is showing.
+
+### How the course maps onto the world
+
+The simulation runs in a **course-local frame** where `-Y` is always dead
+upwind — that's what keeps the windward mark a genuine beat and the start line
+square to the breeze. Geography is applied only at render time, as a rotation
+onto true north (`public/geo.js`). The physics has no idea where on earth it is,
+which means adding the map changed no sailing behaviour at all.
+
+A room's venue is `{ lat, lon, bearingDeg }`, where `bearingDeg` is the true
+compass bearing the wind blows **from**. Set it in the lobby (paste coordinates
+from any map, or hit 📍 for your current position), or pass it in the link:
+
+```
+https://your-worker.workers.dev/?room=abc12&lat=-41.2865&lon=174.7900&brg=230
+```
+
+The first person into a room fixes the venue; the host can move it while
+everyone is still in the lobby, and it locks once racing starts. Late joiners
+always get the room's venue rather than whatever their own link said, so the
+fleet is guaranteed to be racing the same course.
+
 ## Local development
 
 ```bash
@@ -64,6 +105,12 @@ tabs/windows to test a race against yourself.
   single-player prototype.
 - **No matchmaking queue.** Racing happens via a shared room link, not
   auto-paired quick-match — that was the scope picked for this version.
+- **Imagery is NZ-only.** LINZ covers New Zealand; a course set anywhere else
+  gets blank water rather than an error. Supporting elsewhere means adding a
+  second tile source behind the same `/tiles` route.
+- **The course doesn't know where the land is.** Marks are placed purely by the
+  wind axis, so a course set close inshore can put the windward mark on a beach.
+  Fixing that properly needs a coastline check against LINZ vector data.
 
 ## Verifying it works
 

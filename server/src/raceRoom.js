@@ -22,7 +22,15 @@ export class RaceRoom {
     this.races = [];
     this.connected = [];       // boolean per seat
     this.names = [];
-    this.wind = { baseDir: Math.random() * 360, baseSpeed: 10 + Math.random() * 8, t: 0 };
+    // baseDir is 0 by design: the whole simulation runs in a COURSE-LOCAL frame
+    // where -Y is always dead upwind, which is what keeps WINDWARD_MARK an
+    // actual beat and the start line square to the breeze. Where that course
+    // sits on the planet, and which way it points, is `venue` below — applied
+    // only when projecting to lat/lon for the map. The physics never sees it.
+    this.wind = { baseDir: 0, baseSpeed: 10 + Math.random() * 8, t: 0 };
+    // { lat, lon, bearingDeg } — bearingDeg is the TRUE compass bearing the
+    // wind blows FROM, i.e. the direction local -Y points on the real map.
+    this.venue = null;
     this.roomStatus = "lobby"; // lobby | prestart | racing | finished
     this.raceClock = 0;
     this.hostId = null;
@@ -37,6 +45,9 @@ export class RaceRoom {
       if (request.headers.get("Upgrade") !== "websocket") {
         return new Response("expected websocket", { status: 426 });
       }
+      // The first client into a room fixes where on earth it is; everyone who
+      // joins later races the same course regardless of what their link says.
+      this.adoptVenue(url.searchParams);
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);
       this.acceptSession(server, url.searchParams.get("name") || "Sailor");
@@ -48,6 +59,26 @@ export class RaceRoom {
   // this.wind only holds the seed (baseDir/baseSpeed/t) — anything that needs
   // an actual {dir, speed} (spawn placement, etc.) must resolve it first.
   currentWind() { return windAt(this.wind.baseDir, this.wind.baseSpeed, this.wind.t); }
+
+  adoptVenue(params) {
+    if (this.venue) return;
+    // Careful: Number(null) is 0 and Number("") is 0, so a missing parameter
+    // would otherwise read as a perfectly valid course at 0°N 0°E.
+    const latRaw = params.get("lat"), lonRaw = params.get("lon");
+    if (latRaw === null || lonRaw === null || latRaw === "" || lonRaw === "") return;
+    const lat = Number(latRaw), lon = Number(lonRaw);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return;
+
+    const brgRaw = params.get("brg");
+    const brg = brgRaw === null || brgRaw === "" ? NaN : Number(brgRaw);
+    this.venue = {
+      lat, lon,
+      // No bearing given: pick one per room so successive races at the same
+      // venue aren't all pointing the same way down the harbour.
+      bearingDeg: Number.isFinite(brg) ? ((brg % 360) + 360) % 360 : Math.floor(Math.random() * 360)
+    };
+  }
 
   freeSeat() {
     for (let i = 0; i < MAX_BOATS; i++) if (!this.connected[i]) return i;
@@ -84,7 +115,7 @@ export class RaceRoom {
 
     ws.send(JSON.stringify({
       t: "welcome", youId: id, boatIndex: seat, color: BOAT_COLORS[seat % BOAT_COLORS.length],
-      isHost: id === this.hostId, maxBoats: MAX_BOATS
+      isHost: id === this.hostId, maxBoats: MAX_BOATS, venue: this.venue
     }));
     this.broadcastRoster();
     this.ensureTicking();
@@ -113,6 +144,20 @@ export class RaceRoom {
       if (session.id === this.hostId && this.roomStatus === "lobby") {
         this.beginRace();
       }
+    } else if (msg.t === "venue") {
+      // Host can move the course while everyone is still in the lobby; once
+      // racing, the water stays put.
+      if (session.id !== this.hostId || this.roomStatus !== "lobby") return;
+      const lat = Number(msg.lat), lon = Number(msg.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+      if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return;
+      const brg = Number(msg.bearingDeg);
+      this.venue = {
+        lat, lon,
+        bearingDeg: Number.isFinite(brg) ? ((brg % 360) + 360) % 360
+          : (this.venue ? this.venue.bearingDeg : Math.floor(Math.random() * 360))
+      };
+      this.broadcastRoster();
     } else if (msg.t === "rename") {
       const nm = String(msg.name || "").slice(0, 16);
       if (nm) { this.names[session.boatIndex] = nm; this.broadcastRoster(); }
@@ -223,7 +268,7 @@ export class RaceRoom {
       if (!this.boats[i]) continue;
       roster.push({ boatIndex: i, name: this.names[i], connected: !!this.connected[i], color: BOAT_COLORS[i % BOAT_COLORS.length] });
     }
-    this.broadcast({ t: "roster", roster, hostId: this.hostId, roomStatus: this.roomStatus });
+    this.broadcast({ t: "roster", roster, hostId: this.hostId, roomStatus: this.roomStatus, venue: this.venue });
   }
 
   broadcastSnapshot(wind, activeSeats) {

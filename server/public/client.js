@@ -5,9 +5,21 @@ import {
   idealTrimAngle, stepBoatKinematics, freshBoatState,
   dist, bearingTo, currentMarkFor
 } from "./physics-client.js";
+import { localToLatLon, latLonToPixel, metersPerPixel, bestZoomFor, TILE_SIZE } from "./geo.js";
 
 const TAU = Math.PI * 2;
 const RENDER_DELAY_MS = 150; // buffered-interpolation delay applied to *other* boats
+
+// How many screen pixels per metre of water. Now adjustable, because once
+// there's real imagery underneath you want to pull back and see the course.
+let viewScale = PX_PER_METER;
+const MIN_SCALE = 0.9, MAX_SCALE = 10;
+
+// venue = { lat, lon, bearingDeg } once the server tells us where this room is.
+let venue = null;
+let imageryAvailable = false;
+const tileCache = new Map();   // "z/x/y" -> HTMLImageElement (or null once known-missing)
+const TILE_CACHE_MAX = 400;
 
 // ---------- room id / shareable link ----------
 function genRoomId() {
@@ -72,11 +84,129 @@ startBtn.addEventListener("click", () => {
 
 function setConnDot(ok) { connDot.classList.toggle("bad", !ok); }
 
+// ---------- venue (where on earth this course is) ----------
+const venueInput = document.getElementById("venueInput");
+const venueBearing = document.getElementById("venueBearing");
+const venueApplyBtn = document.getElementById("venueApplyBtn");
+const venueLocateBtn = document.getElementById("venueLocateBtn");
+const venueStatus = document.getElementById("venueStatus");
+const attribution = document.getElementById("attribution");
+
+// Accepts what you get from Google Maps / LINZ: "-41.2865, 174.7762"
+function parseLatLon(text) {
+  const m = String(text).trim().match(/^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if (!m) return null;
+  const lat = Number(m[1]), lon = Number(m[2]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  return { lat, lon };
+}
+
+function sendVenue(lat, lon) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  // Number("") is 0, which would silently mean "wind from due north" every time
+  // the field is left blank — treat empty as "server picks".
+  const raw = venueBearing.value.trim();
+  const brg = raw === "" ? NaN : Number(raw);
+  ws.send(JSON.stringify({
+    t: "venue", lat, lon,
+    bearingDeg: Number.isFinite(brg) ? brg : undefined
+  }));
+}
+
+if (venueApplyBtn) {
+  venueApplyBtn.addEventListener("click", () => {
+    const parsed = parseLatLon(venueInput.value);
+    if (!parsed) { venueStatus.textContent = "need \"lat, lon\" — e.g. -41.2865, 174.7762"; return; }
+    venueStatus.textContent = "setting course position…";
+    sendVenue(parsed.lat, parsed.lon);
+  });
+}
+if (venueLocateBtn) {
+  venueLocateBtn.addEventListener("click", () => {
+    if (!navigator.geolocation) { venueStatus.textContent = "this browser has no location support"; return; }
+    venueStatus.textContent = "finding you…";
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude, lon = pos.coords.longitude;
+        venueInput.value = lat.toFixed(5) + ", " + lon.toFixed(5);
+        sendVenue(lat, lon);
+      },
+      () => { venueStatus.textContent = "couldn't get your location — type coordinates instead"; },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  });
+}
+
+function applyVenueToUi() {
+  if (!venueStatus) return;
+  if (venue) {
+    venueInput.value = venue.lat.toFixed(5) + ", " + venue.lon.toFixed(5);
+    venueBearing.value = Math.round(venue.bearingDeg);
+    venueStatus.textContent = "course set — wind from " + Math.round(venue.bearingDeg) + "°T"
+      + (imageryAvailable ? "" : " · no imagery key on this Worker");
+    // Keep the shareable link carrying the venue, so a fresh room from this
+    // link starts at the same place.
+    const p = new URLSearchParams(location.search);
+    p.set("room", roomId);
+    p.set("lat", venue.lat.toFixed(5));
+    p.set("lon", venue.lon.toFixed(5));
+    p.set("brg", String(Math.round(venue.bearingDeg)));
+    history.replaceState(null, "", location.pathname + "?" + p.toString());
+    linkInput.value = location.href;
+  } else {
+    venueStatus.textContent = "open water — set a position to race on the real map";
+  }
+  attribution.classList.toggle("show", !!(venue && imageryAvailable));
+}
+
+// Ask the Worker whether an imagery key is configured before trying tiles.
+fetch("/api/config")
+  .then(r => r.json())
+  .then(cfg => { imageryAvailable = cfg.imagery === "linz"; applyVenueToUi(); })
+  .catch(() => { imageryAvailable = false; });
+
+// ---------- view zoom ----------
+function setScale(next) {
+  viewScale = clamp(next, MIN_SCALE, MAX_SCALE);
+  const el = document.getElementById("zoomReadout");
+  if (el) el.textContent = Math.round(innerWidth / viewScale) + "m";
+}
+document.getElementById("zoomInBtn").addEventListener("click", () => setScale(viewScale * 1.4));
+document.getElementById("zoomOutBtn").addEventListener("click", () => setScale(viewScale / 1.4));
+// Start pulled back enough to see a decent slice of the course on a map.
+setScale(2.2);
+
+// pinch to zoom on the water
+let pinchStart = null;
+const worldCanvas = document.getElementById("world");
+worldCanvas.addEventListener("touchstart", (e) => {
+  if (e.touches.length === 2) {
+    pinchStart = { d: touchDist(e.touches), scale: viewScale };
+  }
+}, { passive: true });
+worldCanvas.addEventListener("touchmove", (e) => {
+  if (e.touches.length === 2 && pinchStart) {
+    const d = touchDist(e.touches);
+    if (pinchStart.d > 0) setScale(pinchStart.scale * (d / pinchStart.d));
+  }
+}, { passive: true });
+worldCanvas.addEventListener("touchend", () => { pinchStart = null; }, { passive: true });
+function touchDist(t) { return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY); }
+
 // ---------- networking ----------
 function connect() {
   const proto = location.protocol === "https:" ? "wss://" : "ws://";
   const name = (nameInput.value || "Sailor").trim().slice(0, 16);
-  const url = proto + location.host + "/ws/" + encodeURIComponent(roomId) + "?name=" + encodeURIComponent(name);
+  const q = new URLSearchParams({ name: (nameInput.value || "Sailor").trim().slice(0, 16) });
+  // Carry any venue from the link through to the room, so opening a shared
+  // course link actually lands you on that patch of water.
+  const here = new URLSearchParams(location.search);
+  for (const k of ["lat", "lon", "brg"]) {
+    const v = here.get(k);
+    if (v !== null && v !== "") q.set(k, v);
+  }
+  const url = proto + location.host + "/ws/" + encodeURIComponent(roomId) + "?" + q.toString();
   ws = new WebSocket(url);
   ws.addEventListener("open", () => { wsRetries = 0; setConnDot(true); lobbyStatus.textContent = "connected"; });
   ws.addEventListener("message", (evt) => { try { onServerMessage(JSON.parse(evt.data)); } catch { /* ignore malformed */ } });
@@ -107,8 +237,13 @@ function onServerMessage(msg) {
   } else if (msg.t === "welcome") {
     myId = msg.youId; myBoatIndex = msg.boatIndex; myColor = msg.color; isHost = msg.isHost; maxBoats = msg.maxBoats;
     rosterMax.textContent = maxBoats;
+    // The room, not your link, decides where the course is — so late joiners
+    // land on the same patch of water as everyone else.
+    venue = msg.venue || null;
+    applyVenueToUi();
   } else if (msg.t === "roster") {
     roomStatus = msg.roomStatus;
+    if (msg.venue !== undefined) { venue = msg.venue; applyVenueToUi(); }
     renderRoster(msg.roster, msg.hostId);
   } else if (msg.t === "start_countdown") {
     lobby.classList.add("hide");
@@ -261,7 +396,7 @@ function drawTape() {
     const major = Math.round(heading) % 30 === 0;
     tapeCtx.beginPath(); tapeCtx.moveTo(x, h - (major ? 22 : 14)); tapeCtx.lineTo(x, h);
     tapeCtx.lineWidth = major ? 1.4 : 1; tapeCtx.stroke();
-    if (major) tapeCtx.fillText(Math.round(heading) + "°", x, h - 26);
+    if (major) tapeCtx.fillText(Math.round(trueDeg(heading)) + "°", x, h - 26);
   }
 
   const wx = xFor(wind.dir);
@@ -302,6 +437,14 @@ trimCanvas.addEventListener("pointerup", endTrimDrag);
 trimCanvas.addEventListener("pointercancel", endTrimDrag);
 
 function currentTWA() { return wrap180(wind.dir - myBoat.headingDeg); }
+
+// Headings and wind are simulated in the course-local frame. Once the course
+// is pinned to a real place, show them as true compass bearings instead —
+// reading "wind @ 3°" next to actual coastline would be nonsense.
+function trueDeg(localDeg) {
+  return venue ? wrap360(localDeg + venue.bearingDeg) : wrap360(localDeg);
+}
+function bearingSuffix() { return venue ? "°T" : "°"; }
 
 function drawTrim() {
   const w = trimCanvas.clientWidth, h = trimCanvas.clientHeight;
@@ -345,6 +488,77 @@ function resizeWorld() {
 window.addEventListener("resize", resizeWorld);
 resizeWorld();
 
+// ---------- satellite map layer ----------
+// Tiles come from our own /tiles proxy (LINZ Basemaps behind it), so no API key
+// is ever in the client and Cloudflare's edge absorbs the repeat requests.
+function getTile(z, x, y) {
+  const key = z + "/" + x + "/" + y;
+  if (tileCache.has(key)) return tileCache.get(key);
+  const img = new Image();
+  img.decoding = "async";
+  img.dataset.ready = "";
+  img.addEventListener("load", () => { img.dataset.ready = "1"; });
+  // 204 (no key / outside coverage) surfaces here as an error — cache the miss
+  // so we don't re-request a tile that will never exist.
+  img.addEventListener("error", () => { tileCache.set(key, null); });
+  img.src = "/tiles/" + z + "/" + x + "/" + y + ".webp";
+  if (tileCache.size > TILE_CACHE_MAX) {
+    // crude LRU-ish trim: drop the oldest inserted keys
+    const drop = tileCache.keys().next().value;
+    tileCache.delete(drop);
+  }
+  tileCache.set(key, img);
+  return img;
+}
+
+function drawMapLayer(cx, cy, w, h) {
+  if (!venue || !imageryAvailable) return false;
+
+  const zoom = bestZoomFor(viewScale, venue.lat, 12, 21);
+  const mPerPx = metersPerPixel(venue.lat, zoom);
+  const scale = mPerPx * viewScale;          // screen px per Mercator px
+  const tilePx = TILE_SIZE * scale;          // on-screen size of one tile
+
+  // Where the player's boat sits in the Mercator pyramid.
+  const boatLL = localToLatLon(myBoat.worldX, myBoat.worldY, venue);
+  const boatPix = latLonToPixel(boatLL.lat, boatLL.lon, zoom);
+
+  // The local frame is rotated relative to true north by the course bearing,
+  // so the north-up imagery has to be counter-rotated to match the course-up view.
+  wctx.save();
+  wctx.translate(cx, cy);
+  wctx.rotate(-venue.bearingDeg * Math.PI / 180);
+
+  // Rotation means the screen rect can sample anywhere inside its circumcircle.
+  const reach = Math.hypot(w, h) / 2 / scale;
+  const minPx = boatPix.px - reach, maxPx = boatPix.px + reach;
+  const minPy = boatPix.py - reach, maxPy = boatPix.py + reach;
+  const span = Math.pow(2, zoom);
+  const x0 = Math.max(0, Math.floor(minPx / TILE_SIZE)), x1 = Math.min(span - 1, Math.floor(maxPx / TILE_SIZE));
+  const y0 = Math.max(0, Math.floor(minPy / TILE_SIZE)), y1 = Math.min(span - 1, Math.floor(maxPy / TILE_SIZE));
+
+  let drewAny = false;
+  for (let tx = x0; tx <= x1; tx++) {
+    for (let ty = y0; ty <= y1; ty++) {
+      const img = getTile(zoom, tx, ty);
+      if (!img || !img.dataset.ready) continue;
+      const sx = (tx * TILE_SIZE - boatPix.px) * scale;
+      const sy = (ty * TILE_SIZE - boatPix.py) * scale;
+      // +1 closes the hairline seams that rounding leaves between tiles
+      wctx.drawImage(img, sx, sy, tilePx + 1, tilePx + 1);
+      drewAny = true;
+    }
+  }
+  wctx.restore();
+
+  if (drewAny) {
+    // Knock the imagery back so boats, marks and the HUD stay readable over it.
+    wctx.fillStyle = "rgba(8,21,27,0.30)";
+    wctx.fillRect(0, 0, w, h);
+  }
+  return drewAny;
+}
+
 function drawBoatShape(originX, originY, headingDeg, hullColor, sailLean, tackSign) {
   wctx.save();
   wctx.translate(originX, originY);
@@ -379,14 +593,20 @@ function drawWorld(info, dt) {
   g.addColorStop(0, "#0e2530"); g.addColorStop(1, "#08151b");
   wctx.fillStyle = g; wctx.fillRect(0, 0, w, h);
 
-  const tile = 46;
-  const ox = (-myBoat.worldX * PX_PER_METER) % tile;
-  const oy = (-myBoat.worldY * PX_PER_METER) % tile;
-  wctx.strokeStyle = "rgba(255,255,255,0.035)"; wctx.lineWidth = 1;
-  for (let x = ox - tile; x < w + tile; x += tile) { wctx.beginPath(); wctx.moveTo(x, 0); wctx.lineTo(x, h); wctx.stroke(); }
-  for (let y = oy - tile; y < h + tile; y += tile) { wctx.beginPath(); wctx.moveTo(0, y); wctx.lineTo(w, y); wctx.stroke(); }
+  const onMap = drawMapLayer(cx, cy, w, h);
 
-  function toScreen(wx, wy) { return [cx + (wx - myBoat.worldX) * PX_PER_METER, cy + (wy - myBoat.worldY) * PX_PER_METER]; }
+  // The abstract drift grid only earns its place when there's no imagery to
+  // read motion against.
+  if (!onMap) {
+    const tile = 46;
+    const ox = (-myBoat.worldX * viewScale) % tile;
+    const oy = (-myBoat.worldY * viewScale) % tile;
+    wctx.strokeStyle = "rgba(255,255,255,0.035)"; wctx.lineWidth = 1;
+    for (let x = ox - tile; x < w + tile; x += tile) { wctx.beginPath(); wctx.moveTo(x, 0); wctx.lineTo(x, h); wctx.stroke(); }
+    for (let y = oy - tile; y < h + tile; y += tile) { wctx.beginPath(); wctx.moveTo(0, y); wctx.lineTo(w, y); wctx.stroke(); }
+  }
+
+  function toScreen(wx, wy) { return [cx + (wx - myBoat.worldX) * viewScale, cy + (wy - myBoat.worldY) * viewScale]; }
 
   // wake, own boat
   maybePushWake(myBoatIndex, myBoat.worldX, myBoat.worldY, myBoat.speedKnots);
@@ -425,7 +645,7 @@ function drawWorld(info, dt) {
   const [mSx, mSy] = toScreen(WINDWARD_MARK.x, WINDWARD_MARK.y);
   wctx.fillStyle = "#dba85a"; wctx.beginPath(); wctx.arc(mSx, mSy, 5, 0, TAU); wctx.fill();
   wctx.strokeStyle = "rgba(219,168,90,0.4)"; wctx.lineWidth = 1;
-  wctx.beginPath(); wctx.arc(mSx, mSy, 8 * PX_PER_METER, 0, TAU); wctx.stroke();
+  wctx.beginPath(); wctx.arc(mSx, mSy, 8 * viewScale, 0, TAU); wctx.stroke();
 
   // other boats
   for (const key in remoteBuffers) {
@@ -544,17 +764,17 @@ function updateFleetCard() {
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
 function updateHud(info) {
-  elWind.textContent = wind.speed.toFixed(1) + " kt @ " + Math.round(wind.dir) + "°";
+  elWind.textContent = wind.speed.toFixed(1) + " kt @ " + Math.round(trueDeg(wind.dir)) + bearingSuffix();
   elTwa.textContent = Math.round(info.absTwa) + "°" + (info.inNoGo ? " (pinching)" : "");
   elTwa.classList.toggle("warn", info.drifting);
   elSpeed.textContent = myBoat.speedKnots.toFixed(1) + " kt" + (info.drifting && myBoat.speedKnots < -0.05 ? " (sternway)" : "");
   elSpeed.classList.toggle("warn", info.drifting);
-  elHeading.textContent = Math.round(myBoat.headingDeg) + "°";
+  elHeading.textContent = Math.round(trueDeg(myBoat.headingDeg)) + bearingSuffix();
   elTack.textContent = myBoat.tackSign > 0 ? "STARBOARD TACK" : "PORT TACK";
   elTack.className = "tack-badge " + (myBoat.tackSign > 0 ? "starboard" : "port");
   elStall.textContent = myBoat.speedKnots < -0.05 ? "IN IRONS — DRIFTING BACKWARD" : "IN IRONS — NO DRIVE";
   elStall.classList.toggle("show", info.drifting);
-  elTapeReadout.textContent = Math.round(myBoat.headingDeg) + "° → " + Math.round(myBoat.targetHeadingDeg) + "°";
+  elTapeReadout.textContent = Math.round(trueDeg(myBoat.headingDeg)) + "° → " + Math.round(trueDeg(myBoat.targetHeadingDeg)) + "°";
   elTrimReadout.textContent = myBoat.autoTrim ? "auto" : Math.round(myBoat.trimAngleDeg) + "° · " + Math.round(myBoat.trimEfficiency01 * 100) + "%";
 }
 
