@@ -1,0 +1,1147 @@
+<title>Sailing Physics Prototype</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    --bg: #0c1a1f;
+    --water-a: #0e2530;
+    --water-b: #0a1c24;
+    --surface: #122228;
+    --surface-alt: #182d33;
+    --ink: #e2ece9;
+    --ink-dim: #b7c7c5;
+    --muted: #7d9997;
+    --border: #274045;
+    --accent: #dba85a;
+    --accent-strong: #f0c581;
+    --accent-soft: rgba(219,168,90,0.16);
+    --port: #e2726f;
+    --starboard: #5fc28c;
+    --danger: #e2726f;
+    --ghost: #6fa9d9;
+    --focus: #6fa9d9;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--ink);
+    font-family: "Public Sans", system-ui, sans-serif;
+    touch-action: none;
+    user-select: none;
+  }
+
+  #world {
+    position: fixed; inset: 0;
+    display: block;
+  }
+
+  .hud {
+    position: fixed; inset: 0;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: max(14px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom));
+    gap: 8px;
+  }
+
+  .hud * { pointer-events: auto; }
+
+  .top-stack { display: flex; flex-direction: column; gap: 8px; }
+
+  .top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .card {
+    background: rgba(18,34,40,0.82);
+    backdrop-filter: blur(6px);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+  }
+
+  .doc-title {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+    margin: 0 0 2px;
+  }
+  .doc-sub {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 10.5px;
+    color: var(--muted);
+    letter-spacing: 0.03em;
+  }
+
+  .readouts {
+    display: grid;
+    grid-template-columns: repeat(2, auto);
+    gap: 2px 18px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+  }
+  .readouts .lbl { color: var(--muted); }
+  .readouts .val { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; font-weight: 500; }
+  .readouts .val.warn { color: var(--danger); }
+
+  .tack-badge {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    text-align: center;
+    margin-top: 8px;
+    transition: color .15s ease, border-color .15s ease;
+  }
+  .tack-badge.port { color: var(--port); border-color: var(--port); }
+  .tack-badge.starboard { color: var(--starboard); border-color: var(--starboard); }
+
+  .sync-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 10.5px;
+    color: var(--muted);
+  }
+  .sync-bar .sync-title { color: var(--ghost); letter-spacing: 0.06em; font-weight: 500; }
+  .sync-bar .field { display: flex; align-items: center; gap: 6px; }
+  .sync-bar input[type=range] {
+    width: 84px; accent-color: var(--ghost); height: 16px;
+  }
+  .sync-bar .num { color: var(--ink-dim); min-width: 3.2em; text-align: right; }
+  .sync-bar .age { color: var(--ink-dim); }
+  .sync-bar .age.stale { color: var(--danger); }
+
+  button.ghostToggle {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.05em;
+    background: var(--surface-alt);
+    border-radius: 7px;
+    padding: 5px 9px;
+    cursor: pointer;
+    border: 1px solid var(--danger);
+    color: var(--danger);
+  }
+  button.ghostToggle.mode-interp { border-color: var(--starboard); color: var(--starboard); }
+  button.ghostToggle.mode-instant { border-color: var(--ghost); color: var(--bg); background: var(--ghost); }
+  button.ghostToggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  .sync-bar .field.dim { opacity: 0.4; }
+  .sync-bar .age.ok { color: var(--starboard); }
+
+  .race-bar {
+    display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap;
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px;
+  }
+  .race-bar .race-clock { color: var(--accent-strong); font-weight: 500; letter-spacing: 0.04em; }
+  .race-bar .race-leg { color: var(--ink-dim); }
+  .race-bar .race-arrow {
+    display: inline-block; color: var(--accent);
+    transition: transform 0.2s ease; font-size: 13px;
+  }
+  .race-bar .race-dist { color: var(--muted); }
+  button.restart-btn {
+    margin-left: auto;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 10.5px; letter-spacing: 0.05em;
+    background: var(--surface-alt); color: var(--ink-dim);
+    border: 1px solid var(--border); border-radius: 7px;
+    padding: 5px 9px; cursor: pointer;
+  }
+  button.restart-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  .ocs-banner { border-color: var(--accent); background: rgba(219,168,90,0.16); color: #ffe8c2; }
+  .penalty-banner { border-color: var(--port); background: rgba(168,58,58,0.18); color: #ffd9d7; }
+  .penalty-banner .p-deg { font-variant-numeric: tabular-nums; margin-left: 4px; opacity: 0.85; }
+
+  .stall-banner {
+    align-self: center;
+    background: rgba(226,114,111,0.16);
+    border: 1px solid var(--port);
+    color: #ffd9d7;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    padding: 6px 14px;
+    border-radius: 999px;
+    opacity: 0;
+    transform: translateY(-6px);
+    transition: opacity .2s ease, transform .2s ease;
+  }
+  .stall-banner.show { opacity: 1; transform: translateY(0); }
+
+  button.ghost {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    background: var(--surface-alt);
+    color: var(--ink-dim);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 7px 10px;
+    cursor: pointer;
+  }
+  button.ghost.active { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+  button.ghost:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  .controls {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .control-block {
+    background: rgba(18,34,40,0.82);
+    backdrop-filter: blur(6px);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 8px 10px 10px;
+  }
+  .control-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin-bottom: 4px;
+    padding: 0 2px;
+  }
+  .control-label b { color: var(--accent-strong); font-weight: 500; }
+
+  canvas.strip { display: block; width: 100%; border-radius: 8px; touch-action: none; }
+  #headingTape { height: 64px; }
+  #trimSlider { height: 46px; }
+
+  .legend {
+    display: flex; gap: 14px; align-items: center;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 10px; color: var(--muted);
+    padding: 4px 2px 0;
+  }
+  .legend .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+
+  @media (max-width: 480px) {
+    .card { padding: 8px 10px; }
+    .readouts { font-size: 11.5px; }
+    .sync-bar input[type=range] { width: 64px; }
+  }
+</style>
+
+<canvas id="world"></canvas>
+
+<div class="hud">
+  <div class="top-stack">
+    <div class="top-bar">
+      <div class="card">
+        <p class="doc-title">Sailing Physics &mdash; Prototype</p>
+        <p class="doc-sub">v0.3 &middot; you + 1 ghost boat &middot; interpolation test</p>
+      </div>
+      <div class="card readouts" id="readouts">
+        <span class="lbl">wind</span><span class="val" id="rWind">&mdash;</span>
+        <span class="lbl">twa</span><span class="val" id="rTwa">&mdash;</span>
+        <span class="lbl">speed</span><span class="val" id="rSpeed">&mdash;</span>
+        <span class="lbl">heading</span><span class="val" id="rHeading">&mdash;</span>
+        <div class="tack-badge" id="tackBadge">&mdash;</div>
+      </div>
+    </div>
+
+    <div class="card race-bar" id="raceBar">
+      <span class="race-clock" id="raceClock">PRESTART &middot; 0:20</span>
+      <span class="race-leg" id="raceLeg">&rarr; start line</span>
+      <span class="race-arrow" id="markArrow" aria-hidden="true">&uarr;</span>
+      <span class="race-dist" id="markDist">&mdash;</span>
+      <button class="restart-btn" id="restartBtn" type="button">RESTART</button>
+    </div>
+
+    <div class="card sync-bar">
+      <span class="sync-title">SYNC SIM &middot; ghost boat</span>
+      <button class="ghostToggle" id="syncModeBtn" type="button">DUMB BROADCAST</button>
+      <label class="field">rate <input type="range" id="hzRange" min="2" max="20" step="1" value="8"><span class="num" id="hzVal">8 Hz</span></label>
+      <label class="field">latency <input type="range" id="latRange" min="0" max="500" step="10" value="200"><span class="num" id="latVal">200 ms</span></label>
+      <label class="field" id="interpField">delay <input type="range" id="interpRange" min="50" max="600" step="10" value="350"><span class="num" id="interpVal">350 ms</span></label>
+      <span class="field age" id="packetAge">last packet: &mdash;</span>
+    </div>
+  </div>
+
+  <div class="stall-banner ocs-banner" id="ocsBanner">OCS &mdash; RETURN BEHIND THE LINE</div>
+  <div class="stall-banner" id="stallBanner">IN IRONS &mdash; NO DRIVE</div>
+  <div class="stall-banner penalty-banner" id="penaltyBanner">PENALTY TURN &mdash; <span id="penaltyRule"></span><span class="p-deg" id="penaltyDeg"></span></div>
+
+  <div class="controls">
+    <div class="control-block">
+      <div class="control-label">
+        <span>HEADING &mdash; drag the bug to set a target</span>
+        <b id="tapeReadout">&mdash;</b>
+      </div>
+      <canvas class="strip" id="headingTape"></canvas>
+      <div class="legend">
+        <span><span class="dot" style="background:var(--accent)"></span>wind</span>
+        <span><span class="dot" style="background:var(--ink)"></span>heading</span>
+        <span><span class="dot" style="background:var(--danger)"></span>target</span>
+        <span>shaded &middot; no&#8209;go zone</span>
+      </div>
+    </div>
+
+    <div class="control-block">
+      <div class="control-label">
+        <span>SAIL TRIM</span>
+        <span style="display:flex; gap:8px; align-items:center;">
+          <b id="trimReadout">&mdash;</b>
+          <button class="ghost active" id="autoTrimBtn" type="button">AUTO</button>
+        </span>
+      </div>
+      <canvas class="strip" id="trimSlider"></canvas>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------- helpers ----------
+  var TAU = Math.PI * 2, D2R = Math.PI / 180;
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function wrap360(a) { a = a % 360; if (a < 0) a += 360; return a; }
+  function wrap180(a) { a = wrap360(a + 180) - 180; return a; }
+
+  // ---------- reference polar table: real Finn dinghy chart (matches the design doc) ----------
+  var TWA_ROWS = [40, 45, 50, 60, 75, 90, 110, 120, 135, 150, 165, 180];
+  var TWS_COLS = [5, 8, 10, 12, 15, 18, 20, 25];
+  var POLAR = [
+    [2.1, 3.2, 4.7, 5.7, 6.7, 7.6, 8.2, 9.5],
+    [2.2, 3.6, 5.0, 6.1, 7.2, 8.2, 8.9, 10.3],
+    [2.3, 3.9, 5.2, 6.3, 7.5, 8.5, 9.2, 10.6],
+    [2.6, 4.3, 5.5, 6.7, 8.0, 9.2, 10.0, 11.4],
+    [2.8, 4.7, 5.8, 7.0, 8.4, 9.6, 10.4, 11.8],
+    [2.9, 4.9, 6.0, 7.2, 8.6, 9.9, 10.7, 12.1],
+    [3.0, 5.1, 6.2, 7.4, 8.9, 10.2, 11.0, 12.4],
+    [3.1, 5.2, 6.3, 7.5, 9.0, 10.3, 11.2, 12.6],
+    [3.0, 5.1, 6.1, 7.2, 8.7, 10.0, 10.8, 12.2],
+    [2.7, 4.6, 5.7, 6.7, 8.1, 9.3, 10.0, 11.3],
+    [2.3, 3.9, 5.3, 6.2, 7.3, 8.4, 9.1, 10.4],
+    [2.0, 3.4, 5.0, 5.8, 6.8, 7.8, 8.4, 9.6]
+  ];
+
+  function bracket(arr, v) {
+    v = clamp(v, arr[0], arr[arr.length - 1]);
+    var lo = 0;
+    for (var i = 0; i < arr.length - 1; i++) { if (v >= arr[i] && v <= arr[i + 1]) { lo = i; break; } }
+    var hi = Math.min(lo + 1, arr.length - 1);
+    var span = arr[hi] - arr[lo];
+    var t = span > 0 ? (v - arr[lo]) / span : 0;
+    return { lo: lo, hi: hi, t: t };
+  }
+
+  function polarSpeed(absTwaDeg, twsKnots) {
+    var a = bracket(TWA_ROWS, absTwaDeg);
+    var w = bracket(TWS_COLS, twsKnots);
+    var top = lerp(POLAR[a.lo][w.lo], POLAR[a.lo][w.hi], w.t);
+    var bot = lerp(POLAR[a.hi][w.lo], POLAR[a.hi][w.hi], w.t);
+    return lerp(top, bot, a.t);
+  }
+
+  // ---------- tunables ----------
+  var NO_GO_HALF = 40;          // deg, matches the polar chart's lowest sampled TWA
+  var TACK_LOCKOUT_SEC = 2.0;
+  var ACCEL_KT_PER_SEC = 1.4;
+  var TURN_RATE_MAX = 32;       // deg/s, clear of the no-go zone
+  var TURN_RATE_MIN = 11;       // deg/s, right at/inside the zone
+  var TRIM_MAX_ERROR = 25;      // deg of forgiveness either side of ideal
+  var STERNWAY_DRIFT_FACTOR = 0.06; // backward drift at dead head-to-wind, as a fraction of TWS
+  var MPS_PER_KNOT = 0.5144;
+  var PX_PER_METER = 6.5;
+
+  // ---------- course: a simple windward/leeward, one lap, finish at the start line ----------
+  var PIN_X = -20, BOAT_END_X = 20, START_Y = 0;
+  var WINDWARD_MARK = { x: 0, y: -150 };
+  var MARK_RADIUS = 8;
+  var PRESTART_SECONDS = 20;
+  var RACE_TIMEOUT_SECONDS = 240; // safety reset if nobody finishes
+
+  function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
+  function bearingTo(fromX, fromY, toX, toY) {
+    return wrap360(Math.atan2(toX - fromX, -(toY - fromY)) / D2R);
+  }
+  // does the segment (prevX,prevY)->(curX,curY) cross y=lineY within [xMin,xMax]? returns direction or null
+  function crossedLine(prevX, prevY, curX, curY, lineY, xMin, xMax) {
+    var south2north = prevY > lineY && curY <= lineY;
+    var north2south = prevY < lineY && curY >= lineY;
+    if (!south2north && !north2south) return null;
+    var t = (lineY - prevY) / (curY - prevY);
+    var xAt = prevX + (curX - prevX) * t;
+    if (xAt < xMin || xAt > xMax) return null;
+    return south2north ? "south-to-north" : "north-to-south";
+  }
+
+  function freshRaceState() {
+    return {
+      status: "prestart", leg: 1, ocs: false, prevWorldX: 0, prevWorldY: 0, finishTime: null, place: null,
+      penalty: { active: false, turnedDeg: 0, rule: null, lastHeading: 0 }, immunityTimer: 0
+    };
+  }
+  var race = { clock: 0, finishOrder: [] };
+  var boatRace = freshRaceState();
+  var ghostRace = freshRaceState();
+  var raceRestartTimer = 6;
+
+  // ---------- right-of-way rules: a simplified RRS 10/11, with a real penalty-turn exoneration ----------
+  var INFRINGEMENT_RADIUS = 5;   // m — how close a give-way boat can let it get before it's a foul
+  var PENALTY_TURN_DEG = 360;
+  var PENALTY_IMMUNITY_SEC = 4;  // grace period right after serving a penalty, so it can't instantly re-trigger
+
+  function applyPenaltyOverride(s, rs) {
+    if (!rs.penalty.active) return;
+    s.targetHeadingDeg = wrap360(s.headingDeg + 45); // keep chasing a point ahead -> forces a continuous turn
+  }
+  function updatePenaltyProgress(s, rs, dt) {
+    if (!rs.penalty.active) return;
+    rs.penalty.turnedDeg += Math.abs(wrap180(s.headingDeg - rs.penalty.lastHeading));
+    rs.penalty.lastHeading = s.headingDeg;
+    if (rs.penalty.turnedDeg >= PENALTY_TURN_DEG) {
+      rs.penalty.active = false;
+      rs.immunityTimer = PENALTY_IMMUNITY_SEC;
+      s.targetHeadingDeg = s.headingDeg;
+    }
+  }
+  function startPenalty(s, rs, rule) {
+    rs.penalty.active = true;
+    rs.penalty.turnedDeg = 0;
+    rs.penalty.rule = rule;
+    rs.penalty.lastHeading = s.headingDeg;
+  }
+
+  function stepRules(dt) {
+    if (boatRace.immunityTimer > 0) boatRace.immunityTimer -= dt;
+    if (ghostRace.immunityTimer > 0) ghostRace.immunityTimer -= dt;
+    if (boatRace.status !== "racing" || ghostRace.status !== "racing") return;
+    if (boatRace.penalty.active || ghostRace.penalty.active) return; // one foul at a time keeps this legible
+
+    if (dist(boat.worldX, boat.worldY, ghost.worldX, ghost.worldY) >= INFRINGEMENT_RADIUS) return;
+
+    var giveWayIsBoat, rule;
+    if (boat.tackSign !== ghost.tackSign) {
+      // RRS 10: opposite tacks — port keeps clear of starboard
+      giveWayIsBoat = boat.tackSign < 0;
+      rule = "Rule 10 — port/starboard";
+    } else {
+      // RRS 11: same tack — windward keeps clear of leeward (project position onto the downwind axis)
+      var downwind = wrap360(wind.dir + 180) * D2R;
+      var ux = Math.sin(downwind), uy = -Math.cos(downwind);
+      var boatDownwindPos = boat.worldX * ux + boat.worldY * uy;
+      var ghostDownwindPos = ghost.worldX * ux + ghost.worldY * uy;
+      giveWayIsBoat = boatDownwindPos < ghostDownwindPos; // further upwind = windward = must keep clear
+      rule = "Rule 11 — windward/leeward";
+    }
+
+    var giveWayState = giveWayIsBoat ? boat : ghost;
+    var giveWayRace = giveWayIsBoat ? boatRace : ghostRace;
+    if (giveWayRace.immunityTimer > 0) return;
+    startPenalty(giveWayState, giveWayRace, rule);
+  }
+
+  function currentMarkFor(rs) {
+    return rs.leg === 1 ? WINDWARD_MARK : { x: (PIN_X + BOAT_END_X) / 2, y: START_Y };
+  }
+
+  function stepRace(s, rs, dt) {
+    if (rs.status === "finished") { rs.prevWorldX = s.worldX; rs.prevWorldY = s.worldY; return; }
+    var crossing = crossedLine(rs.prevWorldX, rs.prevWorldY, s.worldX, s.worldY, START_Y, Math.min(PIN_X, BOAT_END_X), Math.max(PIN_X, BOAT_END_X));
+    var afterStart = race.clock >= PRESTART_SECONDS;
+
+    if (rs.status === "prestart") {
+      if (crossing === "south-to-north") {
+        if (afterStart) { rs.status = "racing"; rs.leg = 1; rs.ocs = false; }
+        else { rs.ocs = true; }
+      } else if (crossing === "north-to-south" && rs.ocs) {
+        rs.ocs = false;
+      }
+    } else if (rs.status === "racing") {
+      if (rs.leg === 1) {
+        if (dist(s.worldX, s.worldY, WINDWARD_MARK.x, WINDWARD_MARK.y) < MARK_RADIUS) rs.leg = 2;
+      } else if (rs.leg === 2 && crossing === "south-to-north") {
+        rs.status = "finished";
+        rs.finishTime = race.clock - PRESTART_SECONDS;
+        race.finishOrder.push(rs);
+        rs.place = race.finishOrder.length;
+      }
+    }
+    rs.prevWorldX = s.worldX; rs.prevWorldY = s.worldY;
+  }
+
+  function resetRace() {
+    race.clock = 0;
+    race.finishOrder = [];
+    boat.worldX = -6; boat.worldY = 15; boat.speedKnots = 0;
+    boat.headingDeg = wind.dir + 70; boat.targetHeadingDeg = boat.headingDeg;
+    ghost.worldX = 8; ghost.worldY = 17; ghost.speedKnots = 0;
+    ghost.headingDeg = wind.dir - 70; ghost.targetHeadingDeg = ghost.headingDeg;
+    boatRace.status = "prestart"; boatRace.leg = 1; boatRace.ocs = false; boatRace.finishTime = null; boatRace.place = null;
+    boatRace.prevWorldX = boat.worldX; boatRace.prevWorldY = boat.worldY;
+    boatRace.penalty.active = false; boatRace.penalty.turnedDeg = 0; boatRace.immunityTimer = 0;
+    ghostRace.status = "prestart"; ghostRace.leg = 1; ghostRace.ocs = false; ghostRace.finishTime = null; ghostRace.place = null;
+    ghostRace.prevWorldX = ghost.worldX; ghostRace.prevWorldY = ghost.worldY;
+    ghostRace.penalty.active = false; ghostRace.penalty.turnedDeg = 0; ghostRace.immunityTimer = 0;
+    wake.length = 0;
+    ghostPlan.timer = 0; ghostPlan.leg = 0;
+  }
+
+  function idealTrimAngle(twaDeg) { return clamp(twaDeg * 0.5, 6, 80); }
+  function turnRateFor(absTwaDeg) {
+    var t = clamp(absTwaDeg / (NO_GO_HALF * 1.4), 0, 1);
+    return lerp(TURN_RATE_MIN, TURN_RATE_MAX, t);
+  }
+
+  // Inside the no-go zone, speed no longer clamps to a hard zero at the 40deg wall.
+  // It eases down from full close-hauled speed (at 40deg) toward a small backward
+  // "sternway" drift at dead head-to-wind (0deg), smoothly crossing zero in between.
+  // Smoothstep gives a zero-derivative join at 40deg, so there's no seam against the
+  // ordinary polar curve just outside the zone.
+  function noGoSpeed(absTwaDeg, twsKnots) {
+    var fullCloseHauled = polarSpeed(NO_GO_HALF, twsKnots);
+    var drift = -twsKnots * STERNWAY_DRIFT_FACTOR;
+    var t = clamp(absTwaDeg / NO_GO_HALF, 0, 1);
+    var eased = t * t * (3 - 2 * t); // smoothstep
+    return lerp(drift, fullCloseHauled, eased);
+  }
+
+  // ---------- wind (single seeded-feeling session, slow drift) ----------
+  var wind = { baseDir: 0, baseSpeed: 12.5, t: 0, dir: 0, speed: 12.5 };
+  function stepWind(dt) {
+    wind.t += dt;
+    wind.dir = wrap360(wind.baseDir + Math.sin(wind.t * 0.05) * 7 + Math.sin(wind.t * 0.13 + 1.7) * 2.5);
+    wind.speed = clamp(wind.baseSpeed + Math.sin(wind.t * 0.09 + 0.6) * 3.2 + Math.sin(wind.t * 0.21) * 1.1, 5, 25);
+  }
+
+  // ---------- generic boat kinematics (shared by the player boat and the ghost) ----------
+  function freshBoatState(headingDeg) {
+    return {
+      headingDeg: headingDeg, targetHeadingDeg: headingDeg, speedKnots: 0,
+      trimAngleDeg: 30, trimEfficiency01: 1, autoTrim: true,
+      tackSign: 1, tackLockoutTimer: 0,
+      worldX: 0, worldY: 0
+    };
+  }
+
+  function stepBoatKinematics(s, dt) {
+    var twaSigned = wrap180(wind.dir - s.headingDeg);
+    var absTwa = Math.abs(twaSigned);
+    var pinching = absTwa < NO_GO_HALF;
+
+    var toTarget = wrap180(s.targetHeadingDeg - s.headingDeg);
+    var rate = turnRateFor(absTwa) * dt;
+    if (Math.abs(toTarget) <= rate) s.headingDeg = wrap360(s.headingDeg + toTarget);
+    else s.headingDeg = wrap360(s.headingDeg + Math.sign(toTarget) * rate);
+
+    var newTack = twaSigned >= 0 ? 1 : -1;
+    if (s.tackLockoutTimer > 0) s.tackLockoutTimer -= dt;
+    if (newTack !== s.tackSign && s.tackLockoutTimer <= 0) {
+      s.tackSign = newTack;
+      s.tackLockoutTimer = TACK_LOCKOUT_SEC;
+    }
+
+    if (s.autoTrim) {
+      s.trimEfficiency01 = 0.97;
+    } else {
+      var ideal = idealTrimAngle(absTwa);
+      var err = Math.abs(s.trimAngleDeg - ideal);
+      s.trimEfficiency01 = 1 - Math.pow(clamp(err / TRIM_MAX_ERROR, 0, 1), 1.5);
+    }
+
+    var trimPenalty = lerp(0.55, 1.0, s.trimEfficiency01);
+    var target;
+    if (pinching) {
+      var raw = noGoSpeed(absTwa, wind.speed);
+      // trim only matters when there's real drive to modulate; sail trim doesn't
+      // meaningfully change how fast the wind blows a stalled hull backward.
+      target = raw > 0 ? raw * trimPenalty : raw;
+    } else {
+      target = polarSpeed(absTwa, wind.speed) * trimPenalty;
+    }
+    var maxStep = ACCEL_KT_PER_SEC * dt;
+    if (Math.abs(target - s.speedKnots) <= maxStep) s.speedKnots = target;
+    else s.speedKnots += Math.sign(target - s.speedKnots) * maxStep;
+
+    var mps = s.speedKnots * MPS_PER_KNOT;
+    var hr = s.headingDeg * D2R;
+    s.worldX += Math.sin(hr) * mps * dt;
+    s.worldY += -Math.cos(hr) * mps * dt;
+
+    var drifting = s.speedKnots <= 0.05;
+    return { twaSigned: twaSigned, absTwa: absTwa, inNoGo: pinching, drifting: drifting };
+  }
+
+  // ---------- player boat ----------
+  var boat = freshBoatState(0);
+  var wake = [];
+  var wakeTimer = 0;
+  function currentTWA() { return wrap180(wind.dir - boat.headingDeg); }
+
+  // ---------- ghost boat (a stand-in "other player") + simple autopilot ----------
+  var ghost = freshBoatState(0);
+  ghost.autoTrim = true;
+  var ghostPlan = { timer: 0, leg: 0 };
+  function stepGhostAutopilot(dt) {
+    if (ghostRace.status !== "racing") {
+      // pre-start / finished: hold a gentle reach near the line, well clear of it
+      ghostPlan.timer -= dt;
+      if (ghostPlan.timer <= 0) {
+        ghostPlan.leg = 1 - ghostPlan.leg;
+        ghostPlan.timer = 5 + Math.random() * 3;
+        var idleSide = ghostPlan.leg === 0 ? 1 : -1;
+        ghost.targetHeadingDeg = wrap360(wind.dir + idleSide * 80);
+      }
+      return;
+    }
+    var mark = currentMarkFor(ghostRace);
+    var bearing = bearingTo(ghost.worldX, ghost.worldY, mark.x, mark.y);
+    var twaToMark = wrap180(wind.dir - bearing);
+    if (Math.abs(twaToMark) < NO_GO_HALF + 5) {
+      ghostPlan.timer -= dt;
+      if (ghostPlan.timer <= 0) {
+        ghostPlan.leg = 1 - ghostPlan.leg;
+        ghostPlan.timer = 6 + Math.random() * 4;
+      }
+      var side = ghostPlan.leg === 0 ? 1 : -1;
+      ghost.targetHeadingDeg = wrap360(wind.dir + side * NO_GO_HALF);
+    } else {
+      ghost.targetHeadingDeg = bearing;
+    }
+  }
+
+  // "network" view of the ghost: what the local client actually renders,
+  // fed by a queue of broadcast snapshots rather than the ghost's true state.
+  var netQueue = [];      // in flight, not yet "arrived"
+  var arrivedBuf = [];    // arrived snapshots, ordered by sentAtMs, used for interpolation
+  var netSendTimer = 0;
+  var ghostView = { worldX: 0, worldY: 0, headingDeg: 0, speedKnots: 0, tackSign: 1, revealedAtMs: 0 };
+  var syncMode = "dumb";  // "dumb" (stage 2) -> "interp" (stage 3) -> "instant" (reference)
+  var SYNC_MODES = ["dumb", "interp", "instant"];
+  var interpStale = false;
+
+  function stepNetwork(dt, nowMs) {
+    var hz = parseFloat(hzRange.value);
+    var latencyMs = parseFloat(latRange.value);
+    var interpDelayMs = parseFloat(interpRange.value);
+    hzVal.textContent = hz + " Hz";
+    latVal.textContent = latencyMs + " ms";
+    interpVal.textContent = interpDelayMs + " ms";
+    interpField.classList.toggle("dim", syncMode !== "interp");
+
+    if (syncMode === "instant") {
+      ghostView.worldX = ghost.worldX; ghostView.worldY = ghost.worldY;
+      ghostView.headingDeg = ghost.headingDeg; ghostView.speedKnots = ghost.speedKnots;
+      ghostView.tackSign = ghost.tackSign;
+      packetAge.textContent = "last packet: live";
+      packetAge.className = "field age ok";
+      return;
+    }
+
+    // both dumb and interp modes share the same simulated wire: fixed-rate sends, latency + jitter
+    netSendTimer -= dt;
+    if (netSendTimer <= 0) {
+      netSendTimer += 1 / hz;
+      var jitter = (Math.random() - 0.5) * latencyMs * 0.35;
+      netQueue.push({
+        sentAtMs: nowMs,
+        readyAtMs: nowMs + latencyMs + jitter,
+        worldX: ghost.worldX, worldY: ghost.worldY,
+        headingDeg: ghost.headingDeg, speedKnots: ghost.speedKnots, tackSign: ghost.tackSign
+      });
+    }
+    while (netQueue.length && netQueue[0].readyAtMs <= nowMs) {
+      arrivedBuf.push(netQueue.shift());
+    }
+    while (arrivedBuf.length > 30) arrivedBuf.shift();
+
+    if (syncMode === "dumb") {
+      if (arrivedBuf.length) {
+        var pkt = arrivedBuf[arrivedBuf.length - 1];
+        ghostView.worldX = pkt.worldX; ghostView.worldY = pkt.worldY;
+        ghostView.headingDeg = pkt.headingDeg; ghostView.speedKnots = pkt.speedKnots;
+        ghostView.tackSign = pkt.tackSign;
+        ghostView.revealedAtMs = pkt.readyAtMs;
+      }
+      var age = nowMs - ghostView.revealedAtMs;
+      packetAge.textContent = "last packet: " + Math.max(0, Math.round(age)) + "ms ago";
+      packetAge.className = "field age" + (age > (1000 / hz) * 1.5 ? " stale" : "");
+      return;
+    }
+
+    // interp: render slightly in the past so we always have two real snapshots to lerp between
+    var renderTime = nowMs - interpDelayMs;
+    if (!arrivedBuf.length) return;
+    var lo = null, hi = null;
+    for (var i = 0; i < arrivedBuf.length - 1; i++) {
+      if (arrivedBuf[i].sentAtMs <= renderTime && arrivedBuf[i + 1].sentAtMs >= renderTime) {
+        lo = arrivedBuf[i]; hi = arrivedBuf[i + 1]; break;
+      }
+    }
+    var newest = arrivedBuf[arrivedBuf.length - 1];
+    if (lo && hi) {
+      interpStale = false;
+      var span = hi.sentAtMs - lo.sentAtMs;
+      var t = span > 0 ? (renderTime - lo.sentAtMs) / span : 0;
+      ghostView.worldX = lerp(lo.worldX, hi.worldX, t);
+      ghostView.worldY = lerp(lo.worldY, hi.worldY, t);
+      ghostView.headingDeg = lo.headingDeg + wrap180(hi.headingDeg - lo.headingDeg) * t;
+      ghostView.speedKnots = lerp(lo.speedKnots, hi.speedKnots, t);
+      ghostView.tackSign = lo.tackSign;
+    } else {
+      // buffer underrun: renderTime has run past the newest snapshot we have. Hold, don't guess.
+      interpStale = renderTime > newest.sentAtMs;
+      ghostView.worldX = newest.worldX; ghostView.worldY = newest.worldY;
+      ghostView.headingDeg = newest.headingDeg; ghostView.speedKnots = newest.speedKnots;
+      ghostView.tackSign = newest.tackSign;
+    }
+    if (interpStale) {
+      packetAge.textContent = "buffer underrun — holding last";
+      packetAge.className = "field age stale";
+    } else {
+      packetAge.textContent = "interpolating, " + Math.round(interpDelayMs) + "ms behind live";
+      packetAge.className = "field age ok";
+    }
+  }
+
+  function stepPhysics(dt, nowMs) {
+    stepWind(dt);
+    applyPenaltyOverride(boat, boatRace);
+    var info = stepBoatKinematics(boat, dt);
+    updatePenaltyProgress(boat, boatRace, dt);
+    stepRace(boat, boatRace, dt);
+
+    stepGhostAutopilot(dt);
+    applyPenaltyOverride(ghost, ghostRace); // penalty wins over the autopilot's own target heading
+    stepBoatKinematics(ghost, dt);
+    updatePenaltyProgress(ghost, ghostRace, dt);
+    stepRace(ghost, ghostRace, dt);
+    stepRules(dt);
+    stepNetwork(dt, nowMs);
+
+    race.clock += dt;
+    if (race.finishOrder.length >= 2) {
+      raceRestartTimer -= dt;
+      if (raceRestartTimer <= 0) { resetRace(); raceRestartTimer = 6; }
+    } else if (race.clock > PRESTART_SECONDS + RACE_TIMEOUT_SECONDS) {
+      resetRace();
+    }
+
+    wakeTimer -= dt;
+    if (Math.abs(boat.speedKnots) > 0.15 && wakeTimer <= 0) {
+      wakeTimer = clamp(0.35 - Math.abs(boat.speedKnots) * 0.02, 0.08, 0.35);
+      wake.push({ x: boat.worldX, y: boat.worldY, age: 0 });
+    }
+    for (var i = wake.length - 1; i >= 0; i--) {
+      wake[i].age += dt;
+      if (wake[i].age > 6) wake.splice(i, 1);
+    }
+    return info;
+  }
+
+  // ---------- input: heading tape ----------
+  var tapeCanvas = document.getElementById("headingTape");
+  var tapeCtx = tapeCanvas.getContext("2d");
+  var tapeDrag = null;
+
+  function tapePxPerDeg() { return tapeCanvas.clientWidth / 140; }
+
+  function tapePointerToHeading(clientX) {
+    var rect = tapeCanvas.getBoundingClientRect();
+    var cx = rect.left + rect.width / 2;
+    var dxPx = clientX - cx;
+    return wrap360(boat.headingDeg + dxPx / tapePxPerDeg());
+  }
+
+  tapeCanvas.addEventListener("pointerdown", function (e) {
+    tapeCanvas.setPointerCapture(e.pointerId);
+    tapeDrag = true;
+    boat.targetHeadingDeg = tapePointerToHeading(e.clientX);
+  });
+  tapeCanvas.addEventListener("pointermove", function (e) {
+    if (!tapeDrag) return;
+    boat.targetHeadingDeg = tapePointerToHeading(e.clientX);
+  });
+  function endTapeDrag(e) { tapeDrag = false; }
+  tapeCanvas.addEventListener("pointerup", endTapeDrag);
+  tapeCanvas.addEventListener("pointercancel", endTapeDrag);
+
+  function drawTape() {
+    var w = tapeCanvas.clientWidth, h = tapeCanvas.clientHeight;
+    var dpr = window.devicePixelRatio || 1;
+    if (tapeCanvas.width !== w * dpr || tapeCanvas.height !== h * dpr) {
+      tapeCanvas.width = w * dpr; tapeCanvas.height = h * dpr;
+    }
+    tapeCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    tapeCtx.clearRect(0, 0, w, h);
+    tapeCtx.fillStyle = "#0e2027";
+    tapeCtx.fillRect(0, 0, w, h);
+
+    var cx = w / 2, pxPerDeg = w / 140;
+    function xFor(deg) { return cx + wrap180(deg - boat.headingDeg) * pxPerDeg; }
+
+    var loX = xFor(wind.dir - NO_GO_HALF), hiX = xFor(wind.dir + NO_GO_HALF);
+    tapeCtx.fillStyle = "rgba(226,114,111,0.24)";
+    tapeCtx.fillRect(Math.min(loX, hiX), 0, Math.abs(hiX - loX), h);
+
+    tapeCtx.strokeStyle = "rgba(226,236,233,0.28)";
+    tapeCtx.fillStyle = "rgba(183,199,197,0.85)";
+    tapeCtx.font = "10px 'IBM Plex Mono', monospace";
+    tapeCtx.textAlign = "center";
+    for (var d = -180; d <= 180; d += 10) {
+      var heading = wrap360(boat.headingDeg + d);
+      var x = xFor(heading);
+      if (x < -10 || x > w + 10) continue;
+      var major = Math.round(heading) % 30 === 0;
+      tapeCtx.beginPath();
+      tapeCtx.moveTo(x, h - (major ? 22 : 14));
+      tapeCtx.lineTo(x, h);
+      tapeCtx.lineWidth = major ? 1.4 : 1;
+      tapeCtx.stroke();
+      if (major) tapeCtx.fillText(Math.round(heading) + "°", x, h - 26);
+    }
+
+    var wx = xFor(wind.dir);
+    tapeCtx.fillStyle = "#dba85a";
+    tapeCtx.beginPath();
+    tapeCtx.moveTo(wx, 6); tapeCtx.lineTo(wx - 6, 16); tapeCtx.lineTo(wx + 6, 16);
+    tapeCtx.closePath(); tapeCtx.fill();
+
+    var tx = clamp(xFor(boat.targetHeadingDeg), 8, w - 8);
+    tapeCtx.strokeStyle = "#e2726f";
+    tapeCtx.lineWidth = 2.5;
+    tapeCtx.beginPath();
+    tapeCtx.moveTo(tx, 0); tapeCtx.lineTo(tx, h);
+    tapeCtx.stroke();
+
+    tapeCtx.strokeStyle = "#e2ece9";
+    tapeCtx.lineWidth = 2;
+    tapeCtx.beginPath();
+    tapeCtx.moveTo(cx, 0); tapeCtx.lineTo(cx, h);
+    tapeCtx.stroke();
+  }
+
+  // ---------- input: trim slider ----------
+  var trimCanvas = document.getElementById("trimSlider");
+  var trimCtx = trimCanvas.getContext("2d");
+  var trimDrag = false;
+  var autoTrimBtn = document.getElementById("autoTrimBtn");
+
+  autoTrimBtn.addEventListener("click", function () {
+    boat.autoTrim = !boat.autoTrim;
+    autoTrimBtn.classList.toggle("active", boat.autoTrim);
+    autoTrimBtn.textContent = boat.autoTrim ? "AUTO" : "MANUAL";
+  });
+
+  function trimPointerToAngle(clientX) {
+    var rect = trimCanvas.getBoundingClientRect();
+    var t = clamp((clientX - rect.left) / rect.width, 0, 1);
+    return t * 90;
+  }
+  trimCanvas.addEventListener("pointerdown", function (e) {
+    if (boat.autoTrim) return;
+    trimCanvas.setPointerCapture(e.pointerId);
+    trimDrag = true;
+    boat.trimAngleDeg = trimPointerToAngle(e.clientX);
+  });
+  trimCanvas.addEventListener("pointermove", function (e) {
+    if (!trimDrag) return;
+    boat.trimAngleDeg = trimPointerToAngle(e.clientX);
+  });
+  function endTrimDrag() { trimDrag = false; }
+  trimCanvas.addEventListener("pointerup", endTrimDrag);
+  trimCanvas.addEventListener("pointercancel", endTrimDrag);
+
+  function drawTrim() {
+    var w = trimCanvas.clientWidth, h = trimCanvas.clientHeight;
+    var dpr = window.devicePixelRatio || 1;
+    if (trimCanvas.width !== w * dpr || trimCanvas.height !== h * dpr) {
+      trimCanvas.width = w * dpr; trimCanvas.height = h * dpr;
+    }
+    trimCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    trimCtx.clearRect(0, 0, w, h);
+    trimCtx.fillStyle = "#0e2027";
+    trimCtx.fillRect(0, 0, w, h);
+
+    var trackY = h / 2, pad = 10;
+    function xFor(deg) { return pad + (deg / 90) * (w - pad * 2); }
+
+    var absTwa = Math.abs(currentTWA());
+    var ideal = idealTrimAngle(absTwa);
+    var loX = xFor(clamp(ideal - TRIM_MAX_ERROR, 0, 90));
+    var hiX = xFor(clamp(ideal + TRIM_MAX_ERROR, 0, 90));
+    trimCtx.fillStyle = boat.autoTrim ? "rgba(95,194,140,0.10)" : "rgba(95,194,140,0.20)";
+    trimCtx.fillRect(loX, trackY - 12, hiX - loX, 24);
+
+    trimCtx.strokeStyle = "rgba(226,236,233,0.25)";
+    trimCtx.lineWidth = 2;
+    trimCtx.beginPath();
+    trimCtx.moveTo(pad, trackY); trimCtx.lineTo(w - pad, trackY);
+    trimCtx.stroke();
+
+    var ix = xFor(ideal);
+    trimCtx.strokeStyle = "#5fc28c";
+    trimCtx.lineWidth = 2;
+    trimCtx.beginPath();
+    trimCtx.moveTo(ix, trackY - 14); trimCtx.lineTo(ix, trackY + 14);
+    trimCtx.stroke();
+
+    var hx = xFor(boat.autoTrim ? ideal : boat.trimAngleDeg);
+    trimCtx.fillStyle = boat.autoTrim ? "rgba(219,168,90,0.45)" : "#dba85a";
+    trimCtx.beginPath();
+    trimCtx.arc(hx, trackY, 9, 0, TAU);
+    trimCtx.fill();
+    trimCtx.strokeStyle = "#0c1a1f";
+    trimCtx.lineWidth = 1.5;
+    trimCtx.stroke();
+  }
+
+  // ---------- sync bar wiring ----------
+  var syncModeBtn = document.getElementById("syncModeBtn");
+  var hzRange = document.getElementById("hzRange");
+  var latRange = document.getElementById("latRange");
+  var interpRange = document.getElementById("interpRange");
+  var hzVal = document.getElementById("hzVal");
+  var latVal = document.getElementById("latVal");
+  var interpVal = document.getElementById("interpVal");
+  var interpField = document.getElementById("interpField");
+  var packetAge = document.getElementById("packetAge");
+
+  var SYNC_LABELS = { dumb: "DUMB BROADCAST", interp: "INTERPOLATED", instant: "INSTANT (reference)" };
+  function applySyncMode() {
+    syncModeBtn.textContent = SYNC_LABELS[syncMode];
+    syncModeBtn.className = "ghostToggle mode-" + syncMode;
+  }
+  syncModeBtn.addEventListener("click", function () {
+    var idx = (SYNC_MODES.indexOf(syncMode) + 1) % SYNC_MODES.length;
+    syncMode = SYNC_MODES[idx];
+    applySyncMode();
+  });
+  applySyncMode();
+
+  // ---------- world canvas ----------
+  var world = document.getElementById("world");
+  var wctx = world.getContext("2d");
+  function resizeWorld() {
+    var dpr = window.devicePixelRatio || 1;
+    world.width = innerWidth * dpr; world.height = innerHeight * dpr;
+    world.style.width = innerWidth + "px"; world.style.height = innerHeight + "px";
+    wctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener("resize", resizeWorld);
+  resizeWorld();
+
+  function drawBoatShape(originX, originY, headingDeg, hullColor, sailLean, tackSign) {
+    wctx.save();
+    wctx.translate(originX, originY);
+    wctx.rotate(headingDeg * D2R);
+    wctx.fillStyle = hullColor;
+    wctx.beginPath();
+    wctx.moveTo(0, -20); wctx.lineTo(9, 14); wctx.lineTo(0, 8); wctx.lineTo(-9, 14);
+    wctx.closePath(); wctx.fill();
+    wctx.strokeStyle = "rgba(226,236,233,0.55)";
+    wctx.lineWidth = 2;
+    wctx.beginPath();
+    wctx.moveTo(0, -14);
+    wctx.lineTo((tackSign > 0 ? -1 : 1) * sailLean, 6);
+    wctx.stroke();
+    wctx.restore();
+  }
+
+  function drawWorld(info) {
+    var w = innerWidth, h = innerHeight;
+    var cx = w / 2, cy = h / 2;
+
+    var g = wctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, "#0e2530"); g.addColorStop(1, "#08151b");
+    wctx.fillStyle = g;
+    wctx.fillRect(0, 0, w, h);
+
+    var tile = 46;
+    var ox = (-boat.worldX * PX_PER_METER) % tile;
+    var oy = (-boat.worldY * PX_PER_METER) % tile;
+    wctx.strokeStyle = "rgba(255,255,255,0.035)";
+    wctx.lineWidth = 1;
+    for (var x = ox - tile; x < w + tile; x += tile) {
+      wctx.beginPath(); wctx.moveTo(x, 0); wctx.lineTo(x, h); wctx.stroke();
+    }
+    for (var y = oy - tile; y < h + tile; y += tile) {
+      wctx.beginPath(); wctx.moveTo(0, y); wctx.lineTo(w, y); wctx.stroke();
+    }
+
+    for (var i = 0; i < wake.length; i++) {
+      var p = wake[i];
+      var sx = cx + (p.x - boat.worldX) * PX_PER_METER;
+      var sy = cy + (p.y - boat.worldY) * PX_PER_METER;
+      var a = clamp(1 - p.age / 6, 0, 1) * 0.35;
+      wctx.fillStyle = "rgba(226,236,233," + a.toFixed(3) + ")";
+      wctx.beginPath(); wctx.arc(sx, sy, 2.2, 0, TAU); wctx.fill();
+    }
+
+    wctx.save();
+    wctx.translate(cx, 64);
+    wctx.rotate(wind.dir * D2R);
+    wctx.strokeStyle = "#dba85a"; wctx.fillStyle = "#dba85a";
+    wctx.lineWidth = 2;
+    wctx.beginPath(); wctx.moveTo(0, -26); wctx.lineTo(0, 22); wctx.stroke();
+    wctx.beginPath(); wctx.moveTo(0, 26); wctx.lineTo(-6, 14); wctx.lineTo(6, 14); wctx.closePath(); wctx.fill();
+    wctx.restore();
+
+    // course: start/finish line + windward mark, in world space
+    function toScreen(wx, wy) { return [cx + (wx - boat.worldX) * PX_PER_METER, cy + (wy - boat.worldY) * PX_PER_METER]; }
+    var pin = toScreen(PIN_X, START_Y), boatEnd = toScreen(BOAT_END_X, START_Y);
+    wctx.strokeStyle = boatRace.ocs ? "#e2726f" : "rgba(226,236,233,0.5)";
+    wctx.lineWidth = 1.6;
+    wctx.setLineDash([5, 5]);
+    wctx.beginPath(); wctx.moveTo(pin[0], pin[1]); wctx.lineTo(boatEnd[0], boatEnd[1]); wctx.stroke();
+    wctx.setLineDash([]);
+    [pin, boatEnd].forEach(function (p) {
+      wctx.fillStyle = "#f0c581";
+      wctx.beginPath(); wctx.arc(p[0], p[1], 4, 0, TAU); wctx.fill();
+    });
+    var wm = toScreen(WINDWARD_MARK.x, WINDWARD_MARK.y);
+    wctx.fillStyle = "#dba85a";
+    wctx.beginPath(); wctx.arc(wm[0], wm[1], 5, 0, TAU); wctx.fill();
+    wctx.strokeStyle = "rgba(219,168,90,0.4)"; wctx.lineWidth = 1;
+    wctx.beginPath(); wctx.arc(wm[0], wm[1], MARK_RADIUS * PX_PER_METER, 0, TAU); wctx.stroke();
+
+    // ghost boat, rendered from the (possibly stale) network view, not its true state
+    var gx = cx + (ghostView.worldX - boat.worldX) * PX_PER_METER;
+    var gy = cy + (ghostView.worldY - boat.worldY) * PX_PER_METER;
+    drawBoatShape(gx, gy, ghostView.headingDeg, "rgba(111,169,217,0.85)", 8, ghostView.tackSign);
+    wctx.fillStyle = "rgba(111,169,217,0.9)";
+    wctx.font = "10.5px 'IBM Plex Mono', monospace";
+    wctx.textAlign = "center";
+    wctx.fillText("GHOST · " + ghostView.speedKnots.toFixed(1) + "kt", gx, gy - 28);
+    if (ghostRace.penalty.active) {
+      wctx.fillStyle = "rgba(226,120,116,0.95)";
+      wctx.fillText("PENALTY " + Math.round(ghostRace.penalty.turnedDeg) + "°/" + PENALTY_TURN_DEG + "°", gx, gy - 40);
+    }
+
+    // player boat, screen-fixed, true state
+    var hullColor = info.drifting ? "#e2726f" : (info.inNoGo ? "#f0c581" : "#e2ece9");
+    var sailLean = boat.autoTrim ? 8 : (boat.trimAngleDeg / 90) * 22;
+    drawBoatShape(cx, cy, boat.headingDeg, hullColor, sailLean, boat.tackSign);
+    wctx.fillStyle = "rgba(226,236,233,0.75)";
+    wctx.fillText("YOU", cx, cy - 28);
+  }
+
+  // ---------- HUD text ----------
+  var elWind = document.getElementById("rWind");
+  var elTwa = document.getElementById("rTwa");
+  var elSpeed = document.getElementById("rSpeed");
+  var elHeading = document.getElementById("rHeading");
+  var elTack = document.getElementById("tackBadge");
+  var elStall = document.getElementById("stallBanner");
+  var elOcs = document.getElementById("ocsBanner");
+  var elPenalty = document.getElementById("penaltyBanner");
+  var elPenaltyRule = document.getElementById("penaltyRule");
+  var elPenaltyDeg = document.getElementById("penaltyDeg");
+  var elTapeReadout = document.getElementById("tapeReadout");
+  var elTrimReadout = document.getElementById("trimReadout");
+  var elRaceClock = document.getElementById("raceClock");
+  var elRaceLeg = document.getElementById("raceLeg");
+  var elMarkArrow = document.getElementById("markArrow");
+  var elMarkDist = document.getElementById("markDist");
+  document.getElementById("restartBtn").addEventListener("click", function () { resetRace(); });
+
+  function fmtClock(sec) {
+    sec = Math.max(0, Math.ceil(sec));
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return m + ":" + (s < 10 ? "0" : "") + s;
+  }
+
+  function updateRaceHud() {
+    if (race.finishOrder.length >= 2) {
+      var you = boatRace.place ? "YOU " + (boatRace.place === 1 ? "1st" : "2nd") + " " + boatRace.finishTime.toFixed(1) + "s" : "YOU DNF";
+      var gh = ghostRace.place ? "GHOST " + (ghostRace.place === 1 ? "1st" : "2nd") + " " + ghostRace.finishTime.toFixed(1) + "s" : "GHOST DNF";
+      elRaceClock.textContent = "FINISHED — " + you + " · " + gh;
+      elRaceLeg.textContent = "next race in " + Math.ceil(raceRestartTimer) + "s";
+      elMarkArrow.style.opacity = 0; elMarkDist.textContent = "";
+    } else if (race.clock < PRESTART_SECONDS) {
+      elRaceClock.textContent = "PRESTART · " + fmtClock(PRESTART_SECONDS - race.clock);
+      elRaceLeg.textContent = boatRace.ocs ? "OCS — get back below the line" : "→ start line";
+      updateMarkPointer({ x: (PIN_X + BOAT_END_X) / 2, y: START_Y });
+    } else if (boatRace.status === "finished") {
+      var place = boatRace.place === 1 ? "1st" : "2nd";
+      elRaceClock.textContent = "YOU FINISHED — " + place + " · " + boatRace.finishTime.toFixed(1) + "s";
+      elRaceLeg.textContent = "waiting on the fleet";
+      elMarkArrow.style.opacity = 0; elMarkDist.textContent = "";
+    } else {
+      elRaceClock.textContent = "RACE · " + fmtClock(race.clock - PRESTART_SECONDS);
+      elRaceLeg.textContent = boatRace.leg === 1 ? "→ windward mark" : "→ finish";
+      updateMarkPointer(currentMarkFor(boatRace));
+    }
+    elOcs.classList.toggle("show", boatRace.ocs && race.clock < PRESTART_SECONDS);
+    elPenalty.classList.toggle("show", boatRace.penalty.active);
+    if (boatRace.penalty.active) {
+      elPenaltyRule.textContent = boatRace.penalty.rule;
+      elPenaltyDeg.textContent = " " + Math.round(boatRace.penalty.turnedDeg) + "°/" + PENALTY_TURN_DEG + "°";
+    }
+  }
+
+  function updateMarkPointer(mark) {
+    elMarkArrow.style.opacity = 1;
+    var bearing = bearingTo(boat.worldX, boat.worldY, mark.x, mark.y);
+    var rel = wrap180(bearing - boat.headingDeg);
+    elMarkArrow.style.transform = "rotate(" + rel + "deg)";
+    elMarkDist.textContent = Math.round(dist(boat.worldX, boat.worldY, mark.x, mark.y)) + "m";
+  }
+
+  function updateHud(info) {
+    elWind.textContent = wind.speed.toFixed(1) + " kt @ " + Math.round(wind.dir) + "°";
+    elTwa.textContent = Math.round(info.absTwa) + "°" + (info.inNoGo ? " (pinching)" : "");
+    elTwa.classList.toggle("warn", info.drifting);
+    elSpeed.textContent = boat.speedKnots.toFixed(1) + " kt" + (info.drifting && boat.speedKnots < -0.05 ? " (sternway)" : "");
+    elSpeed.classList.toggle("warn", info.drifting);
+    elHeading.textContent = Math.round(boat.headingDeg) + "°";
+    elTack.textContent = boat.tackSign > 0 ? "STARBOARD TACK" : "PORT TACK";
+    elTack.className = "tack-badge " + (boat.tackSign > 0 ? "starboard" : "port");
+    elStall.textContent = boat.speedKnots < -0.05 ? "IN IRONS — DRIFTING BACKWARD" : "IN IRONS — NO DRIVE";
+    elStall.classList.toggle("show", info.drifting);
+    elTapeReadout.textContent = Math.round(boat.headingDeg) + "° → " + Math.round(boat.targetHeadingDeg) + "°";
+    elTrimReadout.textContent = boat.autoTrim ? "auto" : Math.round(boat.trimAngleDeg) + "° · " + Math.round(boat.trimEfficiency01 * 100) + "%";
+  }
+
+  // ---------- main loop ----------
+  boat.worldX = -6; boat.worldY = 15;
+  boat.headingDeg = wind.dir + 70;
+  boat.targetHeadingDeg = boat.headingDeg;
+  boatRace.prevWorldX = boat.worldX; boatRace.prevWorldY = boat.worldY;
+
+  ghost.worldX = 8; ghost.worldY = 17;
+  ghost.headingDeg = wind.dir - 70;
+  ghost.targetHeadingDeg = ghost.headingDeg;
+  ghostRace.prevWorldX = ghost.worldX; ghostRace.prevWorldY = ghost.worldY;
+  ghostView.worldX = ghost.worldX; ghostView.worldY = ghost.worldY;
+  ghostView.headingDeg = ghost.headingDeg;
+
+  var last = performance.now();
+  function frame(now) {
+    var dt = clamp((now - last) / 1000, 0, 1 / 20);
+    last = now;
+    var info = stepPhysics(dt, now);
+    drawWorld(info);
+    drawTape();
+    drawTrim();
+    updateHud(info);
+    updateRaceHud();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>

@@ -1,0 +1,814 @@
+<title>Sailing Physics Model</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    --bg: #eef2f0;
+    --surface: #ffffff;
+    --surface-alt: #e3ece8;
+    --ink: #12262b;
+    --ink-dim: #3f5559;
+    --muted: #5b7074;
+    --border: #c6d3ce;
+    --accent: #93672a;
+    --accent-strong: #6e4c1c;
+    --accent-soft: #ecdfc4;
+    --port: #a83a3a;
+    --starboard: #2f7d52;
+    --focus: #2f6fa8;
+    --shadow: 0 1px 2px rgba(18,38,43,0.06), 0 8px 24px -12px rgba(18,38,43,0.18);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0c1a1f;
+      --surface: #122228;
+      --surface-alt: #182d33;
+      --ink: #e2ece9;
+      --ink-dim: #b7c7c5;
+      --muted: #85a09d;
+      --border: #274045;
+      --accent: #dba85a;
+      --accent-strong: #f0c581;
+      --accent-soft: #2c2312;
+      --port: #e2726f;
+      --starboard: #5fc28c;
+      --focus: #6fa9d9;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0c1a1f;
+    --surface: #122228;
+    --surface-alt: #182d33;
+    --ink: #e2ece9;
+    --ink-dim: #b7c7c5;
+    --muted: #85a09d;
+    --border: #274045;
+    --accent: #dba85a;
+    --accent-strong: #f0c581;
+    --accent-soft: #2c2312;
+    --port: #e2726f;
+    --starboard: #5fc28c;
+    --focus: #6fa9d9;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Public Sans", "Segoe UI", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .fade-in { animation: fadeIn 0.5s ease-out both; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  }
+
+  a { color: var(--accent-strong); }
+  a:focus-visible, button:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  .page {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: clamp(28px, 6vw, 64px) clamp(18px, 5vw, 28px) 80px;
+  }
+
+  .prose { max-width: 68ch; }
+
+  header.doc-head {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 28px;
+    margin-bottom: 34px;
+  }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent-strong);
+    margin: 0 0 14px;
+  }
+
+  h1 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 600;
+    font-size: clamp(2rem, 4.5vw, 2.85rem);
+    line-height: 1.08;
+    letter-spacing: -0.01em;
+    margin: 0 0 12px;
+    text-wrap: balance;
+  }
+
+  .dek {
+    font-size: 1.08rem;
+    color: var(--ink-dim);
+    max-width: 56ch;
+    margin: 0 0 20px;
+  }
+
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 22px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .meta-row span b { color: var(--ink-dim); font-weight: 500; }
+
+  nav.toc {
+    margin-top: 24px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 4px;
+  }
+  nav.toc a {
+    text-decoration: none;
+    color: var(--ink-dim);
+    font-size: 13.5px;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    transition: border-color 0.15s ease, color 0.15s ease;
+  }
+  nav.toc a:hover { border-color: var(--accent); color: var(--accent-strong); }
+
+  section { margin-top: 52px; scroll-margin-top: 20px; }
+
+  h2 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 600;
+    font-size: clamp(1.35rem, 2.6vw, 1.65rem);
+    letter-spacing: -0.005em;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+
+  .section-kicker {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 8px;
+  }
+
+  h3 {
+    font-family: "Public Sans", sans-serif;
+    font-weight: 700;
+    font-size: 1.05rem;
+    margin: 28px 0 8px;
+  }
+
+  p { margin: 0 0 16px; }
+  ul, ol { margin: 0 0 16px; padding-left: 1.3em; }
+  li { margin-bottom: 6px; }
+
+  strong { font-weight: 600; color: var(--ink); }
+  code {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.88em;
+    background: var(--surface-alt);
+    padding: 0.1em 0.4em;
+    border-radius: 4px;
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 18px 20px;
+    margin: 22px 0;
+    box-shadow: var(--shadow);
+  }
+  .panel h4 {
+    margin: 0 0 8px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent-strong);
+  }
+  .panel p:last-child { margin-bottom: 0; }
+
+  .callout {
+    display: flex;
+    gap: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    margin: 20px 0 28px;
+  }
+  .callout .mark {
+    flex: none;
+    width: 3px;
+    background: var(--accent);
+    border-radius: 2px;
+  }
+  .callout p { margin: 0; font-size: 0.96rem; color: var(--ink-dim); }
+  .callout p + p { margin-top: 8px; }
+
+  pre {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    margin: 18px 0;
+  }
+  pre .cm { color: var(--muted); font-style: italic; }
+
+  .table-wrap {
+    overflow-x: auto;
+    margin: 18px 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 560px;
+    font-size: 14px;
+    background: var(--surface);
+  }
+  caption {
+    caption-side: top;
+    text-align: left;
+    padding: 12px 16px 0;
+    font-size: 13px;
+    color: var(--muted);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  th, td {
+    padding: 9px 14px;
+    text-align: right;
+    border-bottom: 1px solid var(--border);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  th:first-child, td:first-child { text-align: left; font-variant-numeric: normal; }
+  thead th {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-weight: 500;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--surface-alt); }
+
+  figure { margin: 26px 0; }
+  figure svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+  figcaption {
+    margin-top: 10px;
+    font-size: 13.5px;
+    color: var(--muted);
+    text-align: center;
+    max-width: 58ch;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .diagram-frame {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 10px;
+  }
+
+  .knob-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 12px;
+    margin: 18px 0 28px;
+  }
+  .knob {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    background: var(--surface);
+  }
+  .knob .k-name {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
+    color: var(--accent-strong);
+    display: block;
+    margin-bottom: 4px;
+  }
+  .knob .k-val { font-size: 13.5px; color: var(--ink-dim); }
+
+  .tag {
+    display: inline-block;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    padding: 2px 8px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .tag.port { color: var(--port); border-color: color-mix(in srgb, var(--port) 45%, var(--border)); }
+  .tag.starboard { color: var(--starboard); border-color: color-mix(in srgb, var(--starboard) 45%, var(--border)); }
+
+  footer.doc-foot {
+    margin-top: 64px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--muted);
+  }
+  footer.doc-foot ol { padding-left: 1.1em; }
+  footer.doc-foot a { color: var(--muted); }
+  footer.doc-foot li { margin-bottom: 4px; }
+
+  hr.tick-rule {
+    border: none;
+    height: 1px;
+    margin: 40px 0;
+    background: repeating-linear-gradient(90deg, var(--border) 0 6px, transparent 6px 14px);
+  }
+
+  @media (max-width: 560px) {
+    .meta-row { font-size: 11.5px; }
+    th, td { padding: 8px 10px; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="doc-head fade-in">
+    <p class="eyebrow">Mobile yacht racer · technical design</p>
+    <h1>Sailing Physics Model</h1>
+    <p class="dek">How wind becomes boat speed: a server-authoritative, polar-table-driven arcade sailing model built for touch controls and 10&ndash;20&nbsp;Hz multiplayer sync.</p>
+    <div class="meta-row">
+      <span><b>Doc status:</b> draft v0.4</span>
+      <span><b>Date:</b> 21 Aug 2026</span>
+      <span><b>Owns:</b> single-player feel, physics/network contract</span>
+      <span><b>Depends on:</b> nothing &mdash; build this first</span>
+    </div>
+    <nav class="toc" aria-label="Section navigation">
+      <a href="#overview">Overview</a>
+      <a href="#wind">Wind model</a>
+      <a href="#polar">Points of sail &amp; polar model</a>
+      <a href="#forces">Why not a full VPP</a>
+      <a href="#tacking">Tacking &amp; gybing</a>
+      <a href="#rules">Racing rules</a>
+      <a href="#controls">Touch controls</a>
+      <a href="#sync">Server authority &amp; sync</a>
+      <a href="#data">Data structures</a>
+      <a href="#tuning">Tuning knobs</a>
+      <a href="#next">Open questions</a>
+    </nav>
+  </header>
+
+  <main>
+
+    <section id="overview">
+      <p class="section-kicker">01 &middot; Scope</p>
+      <h2>Overview</h2>
+      <div class="prose">
+        <p>This is the first of three design docs for the sailing game &mdash; physics, networking, and touch controls &mdash; and it comes first because it's the one nothing else can be honestly designed without: the networking layer needs to know what state it's syncing, and the control scheme needs to know what it's actually steering.</p>
+        <p>The model here optimizes for four things, roughly in order: it has to <strong>feel responsive on a phone</strong> (no waiting for a "real" wind simulation to resolve), it has to be <strong>cheap enough to run for 20+ boats at once</strong> server-side, it has to be <strong>replayable and cheat-proof</strong> (every boat's speed is a deterministic function of server-known inputs, never something the client asserts), and it should <strong>reward reading the wind</strong> without requiring the player to understand true lift/drag sailing theory.</p>
+        <p>The approach: real sailing has a well-known, well-documented relationship between wind angle and achievable boat speed &mdash; the <a href="#polar">polar diagram</a>. Instead of simulating sails as aerofoils, the server looks up a boat's target speed from a polar table indexed by wind angle and wind strength, then applies trim, turning, and tack-transition penalties on top. It's the same simplification most sailing games converge on, and it happens to map cleanly onto a lag-tolerant, cheat-resistant multiplayer architecture.</p>
+      </div>
+    </section>
+
+    <section id="wind">
+      <p class="section-kicker">02 &middot; Environment</p>
+      <h2>Wind model</h2>
+      <div class="prose">
+        <p>Everything in this doc keys off <strong>true wind angle (TWA)</strong>: the angle between the wind's origin direction and the boat's heading, measured 0&ndash;180&deg; regardless of port or starboard side. 0&deg; is dead into the wind; 180&deg; is dead downwind.</p>
+        <p>The wind itself is a single shared state per race, computed server-side from a per-race seed so every client sees identical conditions without the server having to broadcast every micro-fluctuation:</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption>WindState &mdash; fields the server evaluates each tick</caption>
+          <thead>
+            <tr><th>Field</th><th>Type</th><th>Purpose</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>baseDirectionDeg</td><td>float</td><td>slow-drifting mean direction, race-seeded</td></tr>
+            <tr><td>baseSpeedKnots</td><td>float</td><td>slow-drifting mean strength, race-seeded</td></tr>
+            <tr><td>gustPhase</td><td>float</td><td>sine/Perlin offset layered on top for short gusts</td></tr>
+            <tr><td>directionDeg</td><td>float</td><td>resolved value clients actually sail against</td></tr>
+            <tr><td>speedKnots</td><td>float</td><td>resolved value clients actually sail against</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="prose">
+        <p>Direction and speed both drift on independent, slow sine/noise curves seeded from <code>raceSeed</code>, so the function is pure: <code>WindModel.Evaluate(raceSeed, serverTime)</code> returns the same answer everywhere it's called. That determinism is what makes it safe to let clients run a cosmetic copy of the same function for smooth rendering between snapshots &mdash; but only the server's evaluation is ever used to resolve speed, position, or race results. A client that reports a different local wind reading is either lagging or lying, and either way the server's number wins.</p>
+        <p>Boat speed is a function of the wind <em>relative to the boat</em>, not compass-absolute wind, so every polar lookup below first reduces to TWA <code>= |wrapAngle(windDirectionDeg &minus; boatHeadingDeg)|</code>.</p>
+      </div>
+    </section>
+
+    <section id="polar">
+      <p class="section-kicker">03 &middot; Core model</p>
+      <h2>Points of sail &amp; the polar model</h2>
+      <div class="prose">
+        <p>A real boat can't sail directly into the wind &mdash; there's a cone, typically 35&ndash;45&deg; either side of dead upwind, where sails simply luff and the boat stalls. Sailors call this the <strong>no-go zone</strong>, or being "in irons." Outside that cone, speed climbs as the angle opens up, typically peaking somewhere around a beam reach (90&deg; TWA), then eases off again as the boat runs deeper downwind, because at some point the boat is limited by wind speed itself rather than sail efficiency.</p>
+        <p>Inside the cone, speed doesn't clamp to zero the moment you cross the 40&deg; line &mdash; that reads as a wall, not a boat. It eases down smoothly as the angle tightens, crosses zero somewhere well short of dead upwind, and at true 0&deg; TWA the boat is making slow <strong>sternway</strong>: drifting backward, stern-first, at a speed set by how hard the wind is blowing. That's what a stalled boat with luffing sails actually does, and it turns "in irons" from a hard failure state into a recoverable one &mdash; bear away and drive returns the same way it left.</p>
+      </div>
+
+      <figure class="diagram-frame">
+        <svg viewBox="0 0 640 400" role="img" aria-label="Wind rose diagram showing true wind angle from 0 to 180 degrees, with a shaded no-go zone at the top, and points of sail labeled close-hauled, beam reach, broad reach, and run on both the port and starboard sides.">
+          <path d="M320,205 L223.6,90.1 A150,150 0 0,1 416.4,90.1 Z" fill="var(--surface-alt)" stroke="none"></path>
+          <circle cx="320" cy="205" r="150" fill="none" stroke="currentColor" stroke-opacity="0.5" stroke-width="1.2"></circle>
+
+          <line x1="320" y1="16" x2="320" y2="52" stroke="currentColor" stroke-width="1.6" marker-end="url(#windArrow)"></line>
+          <text x="320" y="10" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" letter-spacing="0.06em" fill="currentColor">TRUE WIND</text>
+
+          <polygon points="320,193 313,215 327,215" fill="currentColor"></polygon>
+
+          <text x="320" y="130" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--muted)">NO&#8209;GO ZONE</text>
+          <text x="320" y="144" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--muted)">(eases to drift, &plusmn;40&deg;)</text>
+
+          <g stroke="currentColor" stroke-width="1.2">
+            <line x1="410" y1="97.8" x2="422.8" y2="82.4"></line>
+            <line x1="230" y1="97.8" x2="217.2" y2="82.4"></line>
+            <line x1="460" y1="205" x2="480" y2="205"></line>
+            <line x1="180" y1="205" x2="160" y2="205"></line>
+            <line x1="419.0" y1="304" x2="433.1" y2="318.1"></line>
+            <line x1="221.0" y1="304" x2="206.9" y2="318.1"></line>
+            <line x1="320" y1="345" x2="320" y2="365"></line>
+          </g>
+
+          <g font-family="Public Sans, sans-serif" font-size="12.5" fill="var(--starboard)">
+            <text x="434.4" y="64.7">CLOSE-HAULED</text>
+            <text x="434.4" y="79.7" font-size="11" fill="var(--muted)">40&deg;</text>
+            <text x="498" y="205" text-anchor="start">BEAM REACH</text>
+            <text x="498" y="219" font-size="11" fill="var(--muted)">90&deg;</text>
+            <text x="445.9" y="326.9">BROAD REACH</text>
+            <text x="445.9" y="341.9" font-size="11" fill="var(--muted)">135&deg;</text>
+          </g>
+          <g font-family="Public Sans, sans-serif" font-size="12.5" fill="var(--port)" text-anchor="end">
+            <text x="205.6" y="64.7">CLOSE-HAULED</text>
+            <text x="205.6" y="79.7" font-size="11" fill="var(--muted)">40&deg;</text>
+            <text x="142" y="205">BEAM REACH</text>
+            <text x="142" y="219" font-size="11" fill="var(--muted)">90&deg;</text>
+            <text x="194.1" y="326.9">BROAD REACH</text>
+            <text x="194.1" y="341.9" font-size="11" fill="var(--muted)">135&deg;</text>
+          </g>
+          <text x="320" y="383" text-anchor="middle" font-family="Public Sans, sans-serif" font-size="12.5" fill="currentColor">RUN &middot; 180&deg;</text>
+
+          <text x="210" y="396" text-anchor="start" font-family="IBM Plex Mono, monospace" font-size="11" letter-spacing="0.05em" fill="var(--port)">PORT TACK</text>
+          <text x="430" y="396" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="11" letter-spacing="0.05em" fill="var(--starboard)">STARBOARD TACK</text>
+
+          <defs>
+            <marker id="windArrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="currentColor"></path>
+            </marker>
+          </defs>
+        </svg>
+        <figcaption>Boat speed as a function of true wind angle (TWA), mirrored across the port and starboard tack. Inside the shaded wedge, drive eases smoothly toward zero and the boat drifts backward at dead center &mdash; not a wall, but not a place to linger either.</figcaption>
+      </figure>
+
+      <div class="prose">
+        <p>For grounding: on a well-documented one-design polar, optimum upwind VMG lands around 45&deg; TWA at roughly 7.4&nbsp;kt boat speed (5.2&nbsp;kt made good toward the mark), and optimum downwind VMG lands around 135&deg; TWA at roughly 5.7&nbsp;kt made good &mdash; noticeably better than the 5.0&nbsp;kt of sailing dead downwind at 180&deg;. That gap is exactly why real racing (and this game) rewards zig-zagging upwind and reaching-and-jibing downwind rather than pointing straight at the mark.</p>
+        <p>The table below is a real <strong>Finn dinghy</strong> target-speed table &mdash; not read off a curve this time, but the designer's own published numbers for TWA 40&ndash;180&deg; across eight true wind speeds. It replaces an earlier, less precise version of this table that was visually estimated off a plotted chart; these values are exact as supplied.</p>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <caption>Finn dinghy target boat speeds (kt) &mdash; true wind angle &times; true wind speed</caption>
+          <thead>
+            <tr><th>TWA</th><th>5 kt</th><th>8 kt</th><th>10 kt</th><th>12 kt</th><th>15 kt</th><th>18 kt</th><th>20 kt</th><th>25 kt</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>40&deg; close-hauled</td><td>2.1</td><td>3.2</td><td>4.7</td><td>5.7</td><td>6.7</td><td>7.6</td><td>8.2</td><td>9.5</td></tr>
+            <tr><td>45&deg;</td><td>2.2</td><td>3.6</td><td>5.0</td><td>6.1</td><td>7.2</td><td>8.2</td><td>8.9</td><td>10.3</td></tr>
+            <tr><td>50&deg;</td><td>2.3</td><td>3.9</td><td>5.2</td><td>6.3</td><td>7.5</td><td>8.5</td><td>9.2</td><td>10.6</td></tr>
+            <tr><td>60&deg;</td><td>2.6</td><td>4.3</td><td>5.5</td><td>6.7</td><td>8.0</td><td>9.2</td><td>10.0</td><td>11.4</td></tr>
+            <tr><td>75&deg;</td><td>2.8</td><td>4.7</td><td>5.8</td><td>7.0</td><td>8.4</td><td>9.6</td><td>10.4</td><td>11.8</td></tr>
+            <tr><td>90&deg; beam reach</td><td>2.9</td><td>4.9</td><td>6.0</td><td>7.2</td><td>8.6</td><td>9.9</td><td>10.7</td><td>12.1</td></tr>
+            <tr><td>110&deg;</td><td>3.0</td><td>5.1</td><td>6.2</td><td>7.4</td><td>8.9</td><td>10.2</td><td>11.0</td><td>12.4</td></tr>
+            <tr><td>120&deg;</td><td>3.1</td><td>5.2</td><td>6.3</td><td>7.5</td><td>9.0</td><td>10.3</td><td>11.2</td><td>12.6</td></tr>
+            <tr><td>135&deg; broad reach</td><td>3.0</td><td>5.1</td><td>6.1</td><td>7.2</td><td>8.7</td><td>10.0</td><td>10.8</td><td>12.2</td></tr>
+            <tr><td>150&deg;</td><td>2.7</td><td>4.6</td><td>5.7</td><td>6.7</td><td>8.1</td><td>9.3</td><td>10.0</td><td>11.3</td></tr>
+            <tr><td>165&deg;</td><td>2.3</td><td>3.9</td><td>5.3</td><td>6.2</td><td>7.3</td><td>8.4</td><td>9.1</td><td>10.4</td></tr>
+            <tr><td>180&deg; run</td><td>2.0</td><td>3.4</td><td>5.0</td><td>5.8</td><td>6.8</td><td>7.8</td><td>8.4</td><td>9.6</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="prose">
+        <p>At runtime the server needs speed at arbitrary angles and wind strengths, not just these twelve sampled rows, so <code>PolarTable.Evaluate</code> does a bilinear interpolation: linear between the two nearest TWA rows, linear again between the two nearest TWS columns. That's cheap enough to run per boat per tick and smooth enough that players never feel a seam between table entries. <code>40&deg;</code> &mdash; the table's lowest sampled angle, and this chart's own close-hauled label &mdash; is also this boat's no-go boundary (<code>noGoHalfAngleDeg</code>).</p>
+      </div>
+
+      <div class="panel">
+        <h4>Why a lookup table instead of simulated lift &amp; drag</h4>
+        <p>A physically simulated sail computes lift and drag from apparent wind angle and a sail's aspect ratio, which is how higher-fidelity sailing sims do it. It's more "real," but the coefficients are non-trivial to tune, the output is harder to keep server-cheap at 20+ boats, and &mdash; most importantly for a competitive game &mdash; it's harder to guarantee two clients converge on the exact same number after a lossy network hop. A table lookup is fast, deterministic, and easy for a designer to reshape by editing numbers instead of aerofoil coefficients.</p>
+      </div>
+
+      <div class="panel">
+        <h4>Inside the no-go zone: ease down, cross zero, drift &mdash; don't clamp</h4>
+        <p>The table has nothing to say below 40&deg; TWA &mdash; real polar data doesn't try to describe a boat pointed into the no-go zone, because there's no steady-state speed to measure there. For the game we can't leave it undefined, so we replace it with a purpose-built curve: from 40&deg; inward, speed doesn't hold the table's edge value or jump to zero, it eases smoothly toward zero using a smoothstep blend (zero derivative at the 40&deg; join, so there's no seam against the table), crosses zero somewhere short of dead upwind, and at true 0&deg; settles into slow backward <strong>sternway</strong> &mdash; the boat drifting stern-first at a fraction of true wind speed, same as a real dinghy with sails luffing and no rudder authority to speak of.</p>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <caption>noGoSpeed(absTwaDeg, twsKnots) &mdash; the 0&ndash;40&deg; blend</caption>
+          <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+          <tbody>
+            <tr><td>fullCloseHauled</td><td>PolarTable.Evaluate(40, tws) &mdash; matches the table exactly at the join</td></tr>
+            <tr><td>drift</td><td>&minus;tws &times; sternwayDriftFactor (default 0.06, i.e. ~6% of true wind speed, backward)</td></tr>
+            <tr><td>eased</td><td>smoothstep(absTwa / 40) &mdash; 0 at dead upwind, 1 at the 40&deg; boundary</td></tr>
+            <tr><td>result</td><td>lerp(drift, fullCloseHauled, eased)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="prose">
+        <p>Trim still matters here, but asymmetrically: it scales the forward-drive portion of that blend (there's a real sweet spot to chase while pinching), but it doesn't touch the backward drift &mdash; sail trim doesn't meaningfully change how fast the wind pushes a stalled hull backward, so a badly-trimmed boat in irons drifts the same as a well-trimmed one.</p>
+      </div>
+    </section>
+
+    <section id="forces">
+      <p class="section-kicker">04 &middot; Design decision</p>
+      <h2>What the model deliberately leaves out</h2>
+      <div class="prose">
+        <p>Full velocity-prediction-program (VPP) sailing physics also model heel angle, hull drag as a function of displacement and wetted surface, leeway, and separate lift/drag coefficients that change shape with apparent wind. None of that is simulated here &mdash; heel is a cosmetic tilt driven by TWA and speed for visual feedback only, and it never feeds back into the speed calculation. That's a conscious trade: this is an arcade racer for a phone, not a VPP, and every one of those systems adds tuning surface area without adding much to how the game actually plays or reads on a 6-inch screen.</p>
+        <p>What the table-driven model does preserve, because it's what actually creates the tactical decisions that make sailing races interesting: the no-go zone forcing upwind tacking, the speed curve rewarding wide reaching angles, and the real cost (below) of changing tack.</p>
+      </div>
+    </section>
+
+    <section id="tacking">
+      <p class="section-kicker">05 &middot; Maneuvers</p>
+      <h2>Tacking &amp; gybing</h2>
+      <div class="prose">
+        <p>A boat's <span class="tag port">tack</span> is simply which side the wind is hitting first &mdash; port tack if TWA is measured to the left of the bow, starboard if to the right. <strong>Tacking</strong> is crossing through the no-go zone to switch tacks while sailing upwind; <strong>gybing</strong> is the downwind equivalent, turning the stern through the wind at TWA near 180&deg;.</p>
+        <p>Two rules keep this from being an exploit rather than a maneuver:</p>
+        <ul>
+          <li><strong>Momentum loss through the zone.</strong> While <code>absTwa &lt; noGoHalfAngle</code>, target speed follows the <code>noGoSpeed</code> blend rather than the outer polar curve &mdash; it eases down, crosses zero, and can even go slightly negative if a tack is slow, with current speed chasing that target at the normal acceleration rate. A clean, fast tack barely dips below the close-hauled speed on either side; a slow one visibly costs way, exactly like real sailing.</li>
+          <li><strong>Tack lockout.</strong> After a completed tack or gybe, a short cooldown (see <a href="#tuning">tuning knobs</a>) blocks another tack. Without this, rapid heading oscillation right at the zone boundary could be used to fish for a favorable polar lookup on every tick; the lockout removes the incentive without needing to detect the pattern explicitly.</li>
+        </ul>
+        <p>Right-of-way is covered separately below, now that a first version of it is implemented rather than deferred.</p>
+      </div>
+    </section>
+
+    <section id="rules">
+      <p class="section-kicker">06 &middot; Racing rules</p>
+      <h2>Right-of-way &amp; penalty turns</h2>
+      <div class="prose">
+        <p>Real fleet racing runs on the <a href="https://www.racingrulesofsailing.org/">Racing Rules of Sailing (RRS)</a>, a dense rulebook covering dozens of situations. The prototype implements a deliberately small slice of it &mdash; the two rules that actually come up constantly in a two-boat windward-leeward race &mdash; rather than attempting the full rulebook:</p>
+        <ul>
+          <li><strong>RRS 10 &mdash; opposite tacks.</strong> When one boat is on <span class="tag port">port</span> and the other on <span class="tag starboard">starboard</span>, port must keep clear.</li>
+          <li><strong>RRS 11 &mdash; same tack.</strong> When both boats are on the same tack, the windward boat must keep clear of the leeward boat. "Windward" here is decided by projecting both boats' positions onto the downwind axis (the line the wind is blowing along) and comparing which sits further upwind on it &mdash; that's a stand-in for the true geometric test (which boat's line would cross the other's transom) and is accurate for the common case but not for extreme angles-of-approach edge cases.</li>
+        </ul>
+        <p>A foul is detected the same way for both boats &mdash; there's no special-casing the player vs. the AI &mdash; whenever the two hulls close to within <code>infringementRadiusM</code> of each other during the racing phase, whichever boat the rule above says is give-way gets penalized, unless it's still within its post-penalty immunity window (see below) or a penalty is already in progress for either boat, which keeps the system to one foul at a time rather than a cascade.</p>
+        <h4>The penalty: a real 360&deg; turn, not a timer</h4>
+        <p>Rather than docking time or freezing the boat &mdash; either of which would feel like an arbitrary punishment bolted on top of the physics &mdash; the penalty is the same thing real sailors do to exonerate a foul: a complete 360&deg; turn, sailed through the model's actual physics. The moment a penalty starts, the boat's target heading is pinned 45&deg; ahead of its current heading every tick, which keeps forcing a turn (through the no-go zone and all) until accumulated heading change reaches <code>penaltyTurnDeg</code>. That means the turn costs exactly what it should: a boat caught head-to-wind mid-turn genuinely slows and can drift backward, same as it would sailing that heading change on purpose, and a boat in open water on a fast reach loses less. Once the turn completes, control returns to the player (or the AI's own autopilot) immediately, and a short <code>penaltyImmunitySec</code> grace period prevents the same proximity from re-triggering the penalty before both boats have actually separated.</p>
+        <p>What this leaves out, deliberately: mark-room rules (RRS 18), tactical rules around the start line (RRS 14&ndash;17), and any rule requiring predicting a future collision course rather than reacting to present proximity. All of those add real tactical depth but need either a bigger rulebook or a geometric closing-speed model this doc doesn't yet specify &mdash; reasonable follow-ups once the two-boat case is proven out.</p>
+      </div>
+    </section>
+
+    <section id="controls">
+      <p class="section-kicker">07 &middot; Input mapping</p>
+      <h2>Touch controls &mdash; what physics needs from input</h2>
+      <div class="prose">
+        <p>This doc isn't the touch-control design (that's next), but the physics model constrains it in two concrete ways worth settling now, since the networking layer needs to know the shape of the input it's carrying.</p>
+      </div>
+      <h3>Heading</h3>
+      <div class="prose">
+        <p>The client never sends a raw heading value &mdash; it sends a <strong>target heading</strong>, and the server turns the boat toward it at a bounded rate (<code>turnRateDegPerSec</code>, itself slower right at the no-go zone boundary to reflect a stalling boat's sluggish rudder authority). This keeps a laggy or malicious client from teleporting its heading, and it's also just a better feel: a compass ribbon the player drags, or a virtual joystick that sets a target rather than a rotation delta, both map naturally onto "target heading" as the wire value.</p>
+      </div>
+      <h3>Sail trim</h3>
+      <div class="prose">
+        <p>Trim is modeled as a single scalar, <code>trimEfficiency01</code> (0&ndash;1), multiplied against the polar-table speed. Two ways to let the player produce that number, not mutually exclusive:</p>
+      </div>
+      <ul>
+        <li><strong>Auto-trim (assist / default):</strong> efficiency is pinned near 1.0 automatically &mdash; the game trims for you, and skill expression comes entirely from heading and tactics. Good default for a mobile audience that didn't come here to learn sail theory.</li>
+        <li><strong>Manual trim (skill layer):</strong> the player drags a trim slider toward an unmarked "sweet spot" that shifts with TWA; efficiency falls off the further they are from it. Rewards players who learn the wind, without requiring them to.</li>
+      </ul>
+      <div class="panel">
+        <h4>Manual trim efficiency, simplified</h4>
+        <p><code>efficiency01 = 1 &minus; clamp(|trimAngle &minus; idealTrimAngle(twa)| / maxTrimError, 0, 1) ^ 1.5</code> &mdash; the exponent just makes the sweet spot forgiving near the center and punishing at the extremes, so small misjudgments barely cost anything but ignoring trim entirely does.</p>
+      </div>
+    </section>
+
+    <section id="sync">
+      <p class="section-kicker">08 &middot; Multiplayer contract</p>
+      <h2>Server authority &amp; sync</h2>
+      <div class="prose">
+        <p>The full networking design is its own doc, but the physics model exists specifically to make that doc easy to write: everything above runs identically whether it's evaluated for one boat locally or twenty boats on a server, because it's pure functions over small state (heading, trim, tack, position) plus one shared, seeded environment (wind). That's what makes ~15&nbsp;Hz server-authoritative simulation with client-side interpolation viable on mobile networks without the physics itself becoming the hard part.</p>
+      </div>
+
+      <figure class="diagram-frame">
+        <svg viewBox="0 0 720 340" role="img" aria-label="Diagram showing two clients sending target heading and trim intent to an authoritative server running a wind model, polar table lookup, and physics integrator at a fixed 15 hertz tick, which produces a world snapshot broadcast back to both clients.">
+          <g font-family="Public Sans, sans-serif" font-size="13">
+            <rect x="20" y="40" width="180" height="56" rx="6" fill="var(--surface-alt)" stroke="currentColor" stroke-width="1.2"></rect>
+            <text x="110" y="63" text-anchor="middle" font-weight="600">Client &mdash; Boat A</text>
+            <text x="110" y="80" text-anchor="middle" font-size="11" fill="var(--muted)">touch input</text>
+
+            <rect x="20" y="200" width="180" height="56" rx="6" fill="var(--surface-alt)" stroke="currentColor" stroke-width="1.2"></rect>
+            <text x="110" y="223" text-anchor="middle" font-weight="600">Client &mdash; Boat B</text>
+            <text x="110" y="240" text-anchor="middle" font-size="11" fill="var(--muted)">touch input</text>
+
+            <rect x="300" y="20" width="240" height="300" rx="8" fill="none" stroke="var(--accent)" stroke-width="1.8"></rect>
+            <text x="420" y="42" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" letter-spacing="0.05em" fill="var(--accent-strong)">AUTHORITATIVE SERVER &middot; 15&nbsp;HZ FIXED TICK</text>
+
+            <rect x="320" y="65" width="200" height="46" rx="5" fill="var(--surface)" stroke="currentColor" stroke-width="1"></rect>
+            <text x="420" y="84" text-anchor="middle" font-weight="600" font-size="12.5">Wind Model</text>
+            <text x="420" y="99" text-anchor="middle" font-size="10.5" fill="var(--muted)">seeded, deterministic</text>
+
+            <line x1="420" y1="111" x2="420" y2="128" stroke="currentColor" stroke-width="1.2" marker-end="url(#downArrow)"></line>
+
+            <rect x="320" y="130" width="200" height="46" rx="5" fill="var(--surface)" stroke="currentColor" stroke-width="1"></rect>
+            <text x="420" y="149" text-anchor="middle" font-weight="600" font-size="12.5">Polar Table</text>
+            <text x="420" y="164" text-anchor="middle" font-size="10.5" fill="var(--muted)">TWA + TWS &rarr; speed</text>
+
+            <line x1="420" y1="176" x2="420" y2="193" stroke="currentColor" stroke-width="1.2" marker-end="url(#downArrow)"></line>
+
+            <rect x="320" y="195" width="200" height="46" rx="5" fill="var(--surface)" stroke="currentColor" stroke-width="1"></rect>
+            <text x="420" y="214" text-anchor="middle" font-weight="600" font-size="12.5">Physics Integrator</text>
+            <text x="420" y="229" text-anchor="middle" font-size="10.5" fill="var(--muted)">heading, position, tack</text>
+
+            <rect x="580" y="150" width="120" height="56" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.4"></rect>
+            <text x="640" y="173" text-anchor="middle" font-weight="600" font-size="12.5">World Snapshot</text>
+            <text x="640" y="189" text-anchor="middle" font-size="10.5" fill="var(--ink-dim)">pos, heading, wind</text>
+
+            <path d="M520,218 L555,218 L555,178 L578,178" fill="none" stroke="currentColor" stroke-width="1.2" marker-end="url(#rightArrow)"></path>
+          </g>
+
+          <g stroke="currentColor" stroke-width="1.2" fill="none">
+            <path d="M200,68 L300,90" marker-end="url(#rightArrow)"></path>
+            <path d="M200,228 L300,248" marker-end="url(#rightArrow)"></path>
+          </g>
+          <text x="248" y="55" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10.5" fill="var(--muted)">intent: heading + trim</text>
+          <text x="248" y="273" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10.5" fill="var(--muted)">~10 Hz, throttled</text>
+
+          <g stroke="currentColor" stroke-width="1.2" stroke-dasharray="4 3" fill="none">
+            <path d="M640,206 L640,300 L110,300"></path>
+            <path d="M110,300 L110,96" marker-end="url(#upArrow)"></path>
+            <path d="M110,300 L110,256" marker-end="url(#upArrow)"></path>
+          </g>
+          <text x="375" y="315" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10.5" fill="var(--muted)">broadcast snapshot, ~15 Hz</text>
+
+          <defs>
+            <marker id="rightArrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="currentColor"></path>
+            </marker>
+            <marker id="downArrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="currentColor"></path>
+            </marker>
+            <marker id="upArrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto-start-reverse">
+              <path d="M0,8 L4,0 L8,8 Z" fill="currentColor"></path>
+            </marker>
+          </defs>
+        </svg>
+        <figcaption>Clients never send position &mdash; only intent. The server is the only place speed and position are computed; clients interpolate between received snapshots and locally predict only their own heading turn for feel, reconciling silently when the next snapshot arrives.</figcaption>
+      </figure>
+
+      <div class="prose">
+        <p>This is the full extent of what this doc claims about networking &mdash; room/lobby management, reconnection handling, and interpolation-buffer tuning belong in the dedicated networking doc, next up.</p>
+      </div>
+    </section>
+
+    <section id="data">
+      <p class="section-kicker">09 &middot; Reference</p>
+      <h2>Data structures &amp; server tick</h2>
+      <div class="prose"><p>Rough C#-flavored pseudocode, close enough to drop into a Unity server project as a starting point:</p></div>
+      <pre><span class="cm">// Per-boat state, owned and mutated only on the server</span>
+struct BoatState {
+    Vector2 position;
+    float   headingDeg;
+    float   targetHeadingDeg;
+    float   speedKnots;
+    float   trimEfficiency01;
+    int     tackSign;         <span class="cm">// -1 port, +1 starboard</span>
+    float   tackLockoutTimer;
+}
+
+<span class="cm">// Resolved once per tick, shared by all boats in the race</span>
+struct WindState {
+    float directionDeg;
+    float speedKnots;
+}
+
+<span class="cm">// Bilinear lookup over the reference table (rows: 40/45/50/60/75/90/110/120/135/150/165/180deg)</span>
+class PolarTable {
+    float Evaluate(float absTwaDeg, float twsKnots) {
+        var (twaLo, twaHi, tTwa) = BracketAngle(absTwaDeg);
+        var (twsLo, twsHi, tTws) = BracketSpeed(twsKnots);
+        float a = Lerp(Grid[twaLo][twsLo], Grid[twaLo][twsHi], tTws);
+        float b = Lerp(Grid[twaHi][twsLo], Grid[twaHi][twsHi], tTws);
+        return Lerp(a, b, tTwa);
+    }
+}
+
+<span class="cm">// Inside the no-go zone: ease to zero, then to a small backward drift.
+// Zero derivative at NoGoHalfAngleDeg keeps this seamless against PolarTable.</span>
+float NoGoSpeed(float absTwaDeg, float twsKnots) {
+    float full  = PolarTable.Evaluate(NoGoHalfAngleDeg, twsKnots);
+    float drift = -twsKnots * SternwayDriftFactor;      <span class="cm">// default 0.06</span>
+    float t     = Mathf.Clamp01(absTwaDeg / NoGoHalfAngleDeg);
+    float eased = t * t * (3f - 2f * t);                 <span class="cm">// smoothstep</span>
+    return Mathf.Lerp(drift, full, eased);
+}
+
+<span class="cm">// Runs at a fixed 15 Hz on the server; never on the client for scoring</span>
+void ServerTick(float dt) {
+    WindState wind = WindModel.Evaluate(raceSeed, serverTime);
+
+    foreach (var boat in boats) {
+        float twaSigned = WrapAngle(wind.directionDeg - boat.headingDeg);
+        float absTwa     = Mathf.Abs(twaSigned);
+        bool  pinching   = absTwa &lt; NoGoHalfAngleDeg;
+
+        boat.headingDeg = TurnToward(
+            boat.headingDeg, boat.targetHeadingDeg,
+            TurnRateDegPerSec(absTwa) * dt);
+
+        float trimPenalty = Mathf.Lerp(0.55f, 1f, boat.trimEfficiency01);
+        float targetSpeed;
+        if (pinching) {
+            float raw = NoGoSpeed(absTwa, wind.speedKnots);
+            <span class="cm">// trim scales drive, not the wind-driven backward drift</span>
+            targetSpeed = raw &gt; 0f ? raw * trimPenalty : raw;
+        } else {
+            targetSpeed = PolarTable.Evaluate(absTwa, wind.speedKnots) * trimPenalty;
+        }
+
+        boat.speedKnots = Mathf.MoveTowards(
+            boat.speedKnots, targetSpeed, AccelKnotsPerSec * dt);
+
+        boat.position += HeadingToVector(boat.headingDeg)
+                          * KnotsToMetersPerSec(boat.speedKnots) * dt;
+
+        UpdateTackState(boat, twaSigned, dt);
+    }
+
+    Broadcast(BuildSnapshot(boats, wind));
+}</pre>
+    </section>
+
+    <section id="tuning">
+      <p class="section-kicker">10 &middot; Balancing</p>
+      <h2>Tuning knobs</h2>
+      <div class="prose"><p>Everything here is meant to be exposed to design, not buried in code, so the boat can be balanced without a rebuild:</p></div>
+      <div class="knob-grid">
+        <div class="knob"><span class="k-name">noGoHalfAngleDeg</span><span class="k-val">35&ndash;45&deg;, per boat class (40&deg; for the Finn)</span></div>
+        <div class="knob"><span class="k-name">sternwayDriftFactor</span><span class="k-val">~0.06 &times; TWS, backward drift when in irons</span></div>
+        <div class="knob"><span class="k-name">turnRateDegPerSec</span><span class="k-val">curve vs. TWA, slower near the zone</span></div>
+        <div class="knob"><span class="k-name">accelKnotsPerSec</span><span class="k-val">how fast speed chases the polar target</span></div>
+        <div class="knob"><span class="k-name">tackLockoutSec</span><span class="k-val">~1.5&ndash;3s, prevents tack-spam</span></div>
+        <div class="knob"><span class="k-name">gustAmplitude / gustPeriod</span><span class="k-val">seeded wind variance over time</span></div>
+        <div class="knob"><span class="k-name">interpolationDelayMs</span><span class="k-val">render-time offset, ~100&ndash;150ms</span></div>
+        <div class="knob"><span class="k-name">maxTrimError</span><span class="k-val">forgiveness window for manual trim</span></div>
+        <div class="knob"><span class="k-name">polarTable[boatClass]</span><span class="k-val">swap per boat if multiple classes ship</span></div>
+        <div class="knob"><span class="k-name">infringementRadiusM</span><span class="k-val">~5m, proximity that counts as a foul</span></div>
+        <div class="knob"><span class="k-name">penaltyTurnDeg</span><span class="k-val">360&deg;, matches the real-world penalty turn</span></div>
+        <div class="knob"><span class="k-name">penaltyImmunitySec</span><span class="k-val">~4s post-penalty grace period</span></div>
+      </div>
+    </section>
+
+    <hr class="tick-rule">
+
+    <section id="next">
+      <p class="section-kicker">11 &middot; Status</p>
+      <h2>Open questions &amp; next steps</h2>
+      <div class="callout">
+        <div class="mark"></div>
+        <div>
+          <p><strong>Next docs:</strong> networking (room/lobby lifecycle, reconnection, interpolation buffer depth) and touch controls (compass-ribbon vs. joystick heading, trim gesture) both build directly on the contracts defined here &mdash; the state this doc treats as fixed (target heading, trim scalar, server snapshot) is what they'll design against.</p>
+          <p><strong>Unresolved:</strong> whether the game ships one boat class or several with distinct polar tables; whether right-of-way ever grows past RRS 10/11 into mark-room and start-line rules; and whether marks/current/tide are ever modeled or stay purely cosmetic. None of these block starting the single-player prototype.</p>
+        </div>
+      </div>
+      <div class="prose">
+        <p>Suggested build order from here, unchanged from the original plan: get this physics model driving a single boat with placeholder touch input, then broadcast raw positions from a dumb server, then swap in the authority model above, then layer race rules and a start sequence on top.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="doc-foot">
+    <p>Sources consulted while grounding the wind/VMG figures above:</p>
+    <ol>
+      <li><a href="https://en.wikipedia.org/wiki/Polar_diagram_(sailing)">Polar diagram (sailing) &mdash; Wikipedia</a></li>
+      <li><a href="https://sailing-blog.nauticed.org/how-do-polar-plots-work-on-a-sailboat/">How do Polar Plots Work on a Sailboat? &mdash; NauticEd</a></li>
+      <li><a href="https://express27.org/articles/polar">Express 27 polar curves</a></li>
+      <li><a href="https://vlytsus.medium.com/my-sailing-story-unity-game-development-part-1-6b6c5e7f3844">My Sailing Story: Unity Game Development, Part 1 &mdash; Victor Lytsus</a></li>
+      <li>Finn dinghy target boat speed table (5/8/10/12/15/18/20/25kt TWS &times; 40&ndash;180&deg; TWA) &mdash; supplied directly by the designer, not a public URL; used verbatim as the reference polar above.</li>
+    </ol>
+  </footer>
+
+</div>
