@@ -1,9 +1,30 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { interpolateSeries } from "../src/index.js";
+import worker, { interpolateSeries } from "../src/index.js";
 import { RaceRoom } from "../src/raceRoom.js";
 import { freshBoatState } from "../src/physics.js";
+
+test("new room connections default to Lyttelton Harbour", async () => {
+  let forwardedUrl;
+  const env = {
+    RACE_ROOM: {
+      idFromName: roomId => roomId,
+      get: () => ({
+        fetch(request) {
+          forwardedUrl = new URL(request.url);
+          return new Response("ok");
+        }
+      })
+    }
+  };
+
+  await worker.fetch(new Request("https://finnracing.test/ws/abc?name=Skipper"), env);
+
+  assert.equal(forwardedUrl.searchParams.get("lat"), "-43.6105");
+  assert.equal(forwardedUrl.searchParams.get("lon"), "172.724");
+  assert.equal(forwardedUrl.searchParams.get("brg"), "75");
+});
 
 test("forecast interpolation follows the shortest path across north", () => {
   const hourly = {

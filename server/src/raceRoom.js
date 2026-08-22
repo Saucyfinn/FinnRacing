@@ -6,11 +6,10 @@ import {
   freshRaceState, stepRace, stepRules, applyPenaltyOverride, updatePenaltyProgress,
   spawnPositions, startLineForBoatCount, PRESTART_SECONDS, RACE_TIMEOUT_SECONDS
 } from "./physics.js";
+import { DEFAULT_VENUE } from "./venue.js";
 
 const BOAT_COLORS = ["#e2ece9", "#6fa9d9", "#f0c581", "#c98bd8", "#7fd1a8", "#e2726f"];
 const RESTART_DELAY_SEC = 6;
-const DEFAULT_VENUE = { lat: -43.6105, lon: 172.724, bearingDeg: 75 }; // Lyttelton Harbour
-
 // One RaceRoom Durable Object instance = one race room (fleet of up to
 // MAX_BOATS boats). The room is addressed by a short room code the client
 // picks, so no separate "create room" API call is needed — the Worker maps
