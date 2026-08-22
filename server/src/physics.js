@@ -169,6 +169,7 @@ export const RACE_TIMEOUT_SECONDS = 240;
 
 // ---------- right-of-way rules ----------
 export const INFRINGEMENT_RADIUS = 5;
+export const PENALTY_CLEARANCE_M = 10;
 export const HULL_COLLISION_RADIUS_M = 4.2;
 export const COLLISION_STOP_SECONDS = 1.5;
 export const PENALTY_TURN_DEG = 360;
@@ -395,7 +396,7 @@ export function stepBoatKinematics(s, wind, dt, waterCurrent = null) {
 export function freshRaceState() {
   return {
     status: "prestart", leg: 1, ocs: false, prevWorldX: 0, prevWorldY: 0, finishTime: null, place: null,
-    penalty: { active: false, turnedDeg: 0, rule: null, lastHeading: 0 }, immunityTimer: 0,
+    penalty: { active: false, pending: false, count: 0, turnedDeg: 0, rule: null, lastHeading: 0 }, immunityTimer: 0,
     collision: { active: false, timer: 0, withBoatIndex: null }
   };
 }
@@ -405,7 +406,7 @@ export function currentMarkFor(rs, windwardMark = WINDWARD_MARK) {
 }
 
 export function stepRace(s, rs, raceClock, dt, startLine = { pinX: PIN_X, boatEndX: BOAT_END_X, y: START_Y }, prestartSeconds = PRESTART_SECONDS, windwardMark = WINDWARD_MARK) {
-  if (rs.status === "finished") { rs.prevWorldX = s.worldX; rs.prevWorldY = s.worldY; return; }
+  if (rs.status === "finished" || rs.status === "disqualified") { rs.prevWorldX = s.worldX; rs.prevWorldY = s.worldY; return; }
   const crossing = crossedLine(rs.prevWorldX, rs.prevWorldY, s.worldX, s.worldY, startLine.y, Math.min(startLine.pinX, startLine.boatEndX), Math.max(startLine.pinX, startLine.boatEndX));
   const afterStart = raceClock >= prestartSeconds;
 
@@ -443,7 +444,18 @@ export function updatePenaltyProgress(s, rs, dt) {
   }
 }
 export function startPenalty(s, rs, rule) {
-  rs.penalty.active = true;
+  if (rs.penalty.active || rs.penalty.pending || rs.status === "disqualified") return;
+  rs.penalty.count += 1;
+  if (rs.penalty.count >= 2) {
+    rs.penalty.active = false;
+    rs.penalty.pending = false;
+    rs.penalty.rule = rule;
+    rs.status = "disqualified";
+    s.speedKnots = 0;
+    return;
+  }
+  rs.penalty.pending = true;
+  rs.penalty.active = false;
   rs.penalty.turnedDeg = 0;
   rs.penalty.rule = rule;
   rs.penalty.lastHeading = s.headingDeg;
@@ -511,9 +523,21 @@ export function stepRules(boats, races, wind, dt, seatIds = boats.map((_, index)
 
       const giveWayBoat = giveWayIsI ? bi : bj;
       const giveWayRace = giveWayIsI ? ri : rj;
-      if (ri.penalty.active || rj.penalty.active || giveWayRace.immunityTimer > 0) continue;
+      if (ri.penalty.active || ri.penalty.pending || rj.penalty.active || rj.penalty.pending || giveWayRace.immunityTimer > 0) continue;
       startPenalty(giveWayBoat, giveWayRace, rule);
     }
+  }
+
+  for (let i = 0; i < boats.length; i++) {
+    const rs = races[i];
+    if (!rs.penalty.pending || rs.status !== "racing") continue;
+    const clear = boats.every((other, j) => j === i || races[j].status === "disqualified" ||
+      dist(boats[i].worldX, boats[i].worldY, other.worldX, other.worldY) >= PENALTY_CLEARANCE_M);
+    if (!clear) continue;
+    rs.penalty.pending = false;
+    rs.penalty.active = true;
+    rs.penalty.turnedDeg = 0;
+    rs.penalty.lastHeading = boats[i].headingDeg;
   }
 }
 

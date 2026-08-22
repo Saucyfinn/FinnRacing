@@ -43,7 +43,7 @@ let myId = null, myBoatIndex = null, myColor = "#e2ece9", isHost = false, isWait
 let myInitialized = false;
 let authoritative = null;
 const myBoat = freshBoatState(0);
-let myRace = { status: "prestart", leg: 1, ocs: false, finishTime: null, place: null, penalty: { active: false, turnedDeg: 0, rule: null } };
+let myRace = { status: "prestart", leg: 1, ocs: false, finishTime: null, place: null, penalty: { active: false, pending: false, count: 0, turnedDeg: 0, rule: null } };
 let wind = { dir: 0, speed: 10 };
 let waterCurrent = { speedKnots: 0, directionDeg: 0, seaLevelM: null, source: "manual" };
 let myDirtyWind = { type: "clean", sourceBoatIndex: null, exposure01: 0, speedDeficitKnots: 0, directionShiftDeg: 0, effectiveSpeed: 10, effectiveDir: 0 };
@@ -56,19 +56,7 @@ let windwardMark = { ...WINDWARD_MARK };
 let lastSnapshotBoats = [];
 const remoteBuffers = {}; // boatIndex -> [{tRecv, worldX, worldY, headingDeg, speedKnots, tackSign, name, color, connected, race}]
 const wakeMap = {}; // boatIndex -> [{x,y,age}]
-const heardHails = new Set();
 let myHail = null;
-
-function hearHail(boat) {
-  if (!boat.hail || heardHails.has(boat.hail.id)) return;
-  heardHails.add(boat.hail.id);
-  if (heardHails.size > 80) heardHails.delete(heardHails.values().next().value);
-  if ("speechSynthesis" in window) {
-    const voice = new SpeechSynthesisUtterance(boat.hail.call.toLowerCase());
-    voice.rate = 1.15; voice.pitch = 0.9; voice.volume = 0.9;
-    window.speechSynthesis.speak(voice);
-  }
-}
 
 // ---------- DOM ----------
 const nameInput = document.getElementById("nameInput");
@@ -654,7 +642,6 @@ function onSnapshot(msg) {
   if (roomStatus !== "lobby" && !isWaiting) lobby.classList.add("hide");
   const now = performance.now();
   for (const b of msg.boats) {
-    hearHail(b);
     if (b.boatIndex === myBoatIndex) {
       if (!myInitialized) {
         myBoat.worldX = b.worldX; myBoat.worldY = b.worldY;
@@ -954,6 +941,37 @@ function drawHailBubble(x, y, hail) {
   wctx.restore();
 }
 
+function drawMapCompass(w) {
+  const x = w - 62, y = 67, radius = 30;
+  const northHeading = venue ? wrap360(-venue.bearingDeg) : 0;
+  const angle = northHeading * D2R;
+  const nx = Math.sin(angle), ny = -Math.cos(angle);
+  wctx.save();
+  wctx.fillStyle = "rgba(5,18,31,0.82)";
+  wctx.strokeStyle = "rgba(226,236,233,0.72)";
+  wctx.lineWidth = 1.4;
+  wctx.beginPath(); wctx.arc(x, y, radius, 0, TAU); wctx.fill(); wctx.stroke();
+  for (let heading = 0; heading < 360; heading += 45) {
+    const r = (heading + northHeading) * D2R;
+    const major = heading % 90 === 0;
+    wctx.beginPath();
+    wctx.moveTo(x + Math.sin(r) * (major ? 21 : 24), y - Math.cos(r) * (major ? 21 : 24));
+    wctx.lineTo(x + Math.sin(r) * 27, y - Math.cos(r) * 27);
+    wctx.stroke();
+  }
+  wctx.strokeStyle = "#ff7874"; wctx.fillStyle = "#ff7874"; wctx.lineWidth = 2.5;
+  wctx.beginPath(); wctx.moveTo(x - nx * 8, y - ny * 8); wctx.lineTo(x + nx * 21, y + ny * 21); wctx.stroke();
+  const tipX = x + nx * 25, tipY = y + ny * 25;
+  const sideX = Math.cos(angle) * 5, sideY = Math.sin(angle) * 5;
+  wctx.beginPath(); wctx.moveTo(tipX, tipY); wctx.lineTo(x + nx * 15 + sideX, y + ny * 15 + sideY);
+  wctx.lineTo(x + nx * 15 - sideX, y + ny * 15 - sideY); wctx.closePath(); wctx.fill();
+  wctx.fillStyle = "#f5fbff"; wctx.font = "700 11px 'IBM Plex Mono', monospace"; wctx.textAlign = "center";
+  wctx.fillText("N", x + nx * 38, y + ny * 38 + 4);
+  wctx.fillStyle = "rgba(226,236,233,0.78)"; wctx.font = "9px 'IBM Plex Mono', monospace";
+  wctx.fillText(venue ? "COURSE " + Math.round(venue.bearingDeg) + "°T" : "COURSE-UP", x, y + 45);
+  wctx.restore();
+}
+
 function drawBoatShape(originX, originY, headingDeg, hullColor, sailLean, tackSign) {
   wctx.save();
   wctx.translate(originX, originY);
@@ -1058,7 +1076,13 @@ function drawWorld(info, dt) {
     }
     wctx.fillStyle = r.color; wctx.font = "10.5px 'IBM Plex Mono', monospace"; wctx.textAlign = "center";
     wctx.fillText(r.name + " · " + r.speedKnots.toFixed(1) + "kt", sx, sy - 28);
-    if (r.race && r.race.penalty && r.race.penalty.active) {
+    if (r.race && r.race.status === "disqualified") {
+      wctx.fillStyle = "rgba(226,120,116,0.95)";
+      wctx.fillText("DSQ · TWO PENALTIES", sx, sy - 40);
+    } else if (r.race && r.race.penalty && r.race.penalty.pending) {
+      wctx.fillStyle = "rgba(240,197,129,0.95)";
+      wctx.fillText("PENALTY PENDING", sx, sy - 40);
+    } else if (r.race && r.race.penalty && r.race.penalty.active) {
       wctx.fillStyle = "rgba(226,120,116,0.95)";
       wctx.fillText("PENALTY " + Math.round(r.race.penalty.turnedDeg) + "°/360°", sx, sy - 40);
     }
@@ -1103,6 +1127,7 @@ function drawWorld(info, dt) {
     wctx.fillText(clock, cx, boxY + 55);
     wctx.restore();
   }
+  drawMapCompass(w);
 }
 
 // ---------- HUD text ----------
@@ -1117,6 +1142,7 @@ const elOcs = document.getElementById("ocsBanner");
 const elPenalty = document.getElementById("penaltyBanner");
 const elPenaltyRule = document.getElementById("penaltyRule");
 const elPenaltyDeg = document.getElementById("penaltyDeg");
+const elDsq = document.getElementById("dsqBanner");
 const elCollision = document.getElementById("collisionBanner");
 const elDirtyWind = document.getElementById("dirtyWindBanner");
 const elTapeReadout = document.getElementById("tapeReadout");
@@ -1146,9 +1172,16 @@ function updateRaceHud() {
     elRaceClock.textContent = "LOBBY"; elRaceLeg.textContent = "waiting to start";
     elMarkArrow.style.opacity = 0; elMarkDist.textContent = "";
     elOcs.classList.remove("show");
+    elPenalty.classList.remove("show");
+    elDsq.classList.remove("show");
+    elCollision.classList.remove("show");
     return;
   }
-  if (myRace.status === "finished") {
+  if (myRace.status === "disqualified") {
+    elRaceClock.textContent = "DISQUALIFIED";
+    elRaceLeg.textContent = "two penalties";
+    elMarkArrow.style.opacity = 0; elMarkDist.textContent = "";
+  } else if (myRace.status === "finished") {
     const place = myRace.place === 1 ? "1st" : myRace.place === 2 ? "2nd" : myRace.place === 3 ? "3rd" : (myRace.place + "th");
     elRaceClock.textContent = "FINISHED — " + place + " · " + (myRace.finishTime || 0).toFixed(1) + "s";
     elRaceLeg.textContent = "next race starts automatically";
@@ -1163,16 +1196,22 @@ function updateRaceHud() {
     updateMarkPointer(currentMarkFor(myRace.leg, windwardMark));
   }
   elOcs.classList.toggle("show", myRace.ocs && raceClock < prestartSeconds);
-  elPenalty.classList.toggle("show", myRace.penalty.active);
+  elPenalty.classList.toggle("show", myRace.penalty.active || myRace.penalty.pending);
+  elDsq.classList.toggle("show", myRace.status === "disqualified");
   elCollision.classList.toggle("show", !!(myRace.collision && myRace.collision.active));
   if (myRace.penalty.active) {
     elPenaltyRule.textContent = myRace.penalty.rule;
     elPenaltyDeg.textContent = " " + Math.round(myRace.penalty.turnedDeg) + "°/360°";
+  } else if (myRace.penalty.pending) {
+    elPenaltyRule.textContent = "PENDING — START, THEN CLEAR THE FLEET";
+    elPenaltyDeg.textContent = " 1/2";
   }
 }
 
 function statusLabel(b) {
+  if (b.race.status === "disqualified") return "DSQ · 2 PENALTIES";
   if (b.race.penalty.active) return "PENALTY " + Math.round(b.race.penalty.turnedDeg) + "°";
+  if (b.race.penalty.pending) return "PENALTY PENDING";
   if (b.race.status === "finished") return "FINISHED " + (b.race.place ? "#" + b.race.place : "");
   if (roomStatus === "lobby") return "lobby";
   if (raceClock < prestartSeconds) return b.race.ocs ? "OCS" : "prestart";

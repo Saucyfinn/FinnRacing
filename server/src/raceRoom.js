@@ -328,7 +328,7 @@ export class RaceRoom {
 
   steerAi(seat) {
     const boat = this.boats[seat], race = this.races[seat];
-    if (!boat || !race || race.penalty.active) return;
+    if (!boat || !race || race.penalty.active || race.status === "disqualified") return;
     boat.autoTrim = true;
     if (this.roomStatus === "lobby") {
       const phase = this.wind.t * 0.10 + seat * 1.7;
@@ -359,7 +359,7 @@ export class RaceRoom {
       }
       return;
     }
-    if (race.status === "finished") { boat.targetHeadingDeg = boat.headingDeg; return; }
+    if (race.status === "finished" || race.status === "disqualified") { boat.targetHeadingDeg = boat.headingDeg; return; }
     if (race.leg === 1) {
       const windDir = this.currentWind().dir;
       const starboard = wrap360(windDir + 42), port = wrap360(windDir - 42);
@@ -501,7 +501,7 @@ export class RaceRoom {
       stepFleetDirtyWind(activeBoats, wind, dt, activeSeats);
       for (const i of activeSeats) {
         const boat = this.boats[i], rs = this.races[i];
-        if (rs.collision && rs.collision.active) {
+        if (rs.status === "disqualified" || (rs.collision && rs.collision.active)) {
           boat.speedKnots = 0;
         } else {
           applyPenaltyOverride(boat, rs);
@@ -517,7 +517,7 @@ export class RaceRoom {
       if (this.roomStatus === "prestart" || this.roomStatus === "racing") {
         const anyRacing = activeSeats.some(i => this.races[i].status === "racing");
         if (anyRacing) this.roomStatus = "racing";
-        const allDone = activeSeats.length > 0 && activeSeats.every(i => this.races[i].status === "finished");
+        const allDone = activeSeats.length > 0 && activeSeats.every(i => ["finished", "disqualified"].includes(this.races[i].status));
         const timedOut = this.raceClock > this.prestartSeconds + RACE_TIMEOUT_SECONDS;
         if (allDone || timedOut) {
           this.roomStatus = "finished";
@@ -586,7 +586,7 @@ export class RaceRoom {
         },
         race: {
           status: r.status, leg: r.leg, ocs: r.ocs, finishTime: r.finishTime, place: r.place,
-          penalty: { active: r.penalty.active, turnedDeg: round2(r.penalty.turnedDeg), rule: r.penalty.rule },
+          penalty: { active: r.penalty.active, pending: r.penalty.pending, count: r.penalty.count, turnedDeg: round2(r.penalty.turnedDeg), rule: r.penalty.rule },
           collision: r.collision
         }
       };

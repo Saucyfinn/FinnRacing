@@ -42,6 +42,7 @@ test("AI starts on the signal and chooses an upwind tack", () => {
 
 test("AI remains on the course, rounds the mark, and finishes", () => {
   const raceRoom = room();
+  raceRoom.wind = { baseDir: 0, baseSpeed: 12, t: 0 };
   raceRoom.prestartSeconds = 30;
   raceRoom.setAiCount(1);
   raceRoom.beginRace();
