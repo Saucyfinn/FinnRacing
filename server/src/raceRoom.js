@@ -8,6 +8,7 @@ import {
 
 const BOAT_COLORS = ["#e2ece9", "#6fa9d9", "#f0c581", "#c98bd8", "#7fd1a8", "#e2726f"];
 const RESTART_DELAY_SEC = 6;
+const DEFAULT_VENUE = { lat: -41.285, lon: 174.825, bearingDeg: 340 }; // Wellington Harbour
 
 // One RaceRoom Durable Object instance = one race room (fleet of up to
 // MAX_BOATS boats). The room is addressed by a short room code the client
@@ -30,7 +31,10 @@ export class RaceRoom {
     this.wind = { baseDir: 0, baseSpeed: 10 + Math.random() * 8, t: 0 };
     // { lat, lon, bearingDeg } — bearingDeg is the TRUE compass bearing the
     // wind blows FROM, i.e. the direction local -Y points on the real map.
-    this.venue = null;
+    // Always start on mapped water. A venue embedded in the first room link,
+    // or a host lobby change, replaces this Wellington Harbour default.
+    this.venue = { ...DEFAULT_VENUE };
+    this.venueChosenFromLink = false;
     this.roomStatus = "lobby"; // lobby | prestart | racing | finished
     this.raceClock = 0;
     this.startLine = startLineForBoatCount(0);
@@ -62,7 +66,7 @@ export class RaceRoom {
   currentWind() { return windAt(this.wind.baseDir, this.wind.baseSpeed, this.wind.t); }
 
   adoptVenue(params) {
-    if (this.venue) return;
+    if (this.venueChosenFromLink) return;
     // Careful: Number(null) is 0 and Number("") is 0, so a missing parameter
     // would otherwise read as a perfectly valid course at 0°N 0°E.
     const latRaw = params.get("lat"), lonRaw = params.get("lon");
@@ -79,6 +83,7 @@ export class RaceRoom {
       // venue aren't all pointing the same way down the harbour.
       bearingDeg: Number.isFinite(brg) ? ((brg % 360) + 360) % 360 : Math.floor(Math.random() * 360)
     };
+    this.venueChosenFromLink = true;
   }
 
   freeSeat() {

@@ -168,6 +168,8 @@
     background: var(--surface-alt); color: var(--ink-dim); border: 1px solid var(--border);
     border-radius: 6px; width: 26px; height: 24px; cursor: pointer; padding: 0;
   }
+  .zoom-btn.auto { width:auto; padding:0 7px; font-size:9px; letter-spacing:.05em; }
+  .zoom-btn.active { color:var(--bg); background:var(--accent); border-color:var(--accent); }
   .zoom-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .zoom-readout { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 3.4em; text-align: center; }
 
@@ -274,6 +276,7 @@
       <span class="race-arrow" id="markArrow" aria-hidden="true">&uarr;</span>
       <span class="race-dist" id="markDist">&mdash;</span>
       <span class="zoom-group">
+        <button class="zoom-btn auto active" id="autoZoomBtn" type="button" aria-pressed="true">AUTO</button>
         <button class="zoom-btn" id="zoomOutBtn" type="button" aria-label="Zoom out">&minus;</button>
         <span class="zoom-readout" id="zoomReadout">&mdash;</span>
         <button class="zoom-btn" id="zoomInBtn" type="button" aria-label="Zoom in">+</button>

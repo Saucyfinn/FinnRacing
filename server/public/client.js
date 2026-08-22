@@ -171,13 +171,23 @@ fetch("/api/config")
   .catch(() => { imageryAvailable = false; });
 
 // ---------- view zoom ----------
+let autoZoomEnabled = true;
+const autoZoomBtn = document.getElementById("autoZoomBtn");
+
 function setScale(next) {
   viewScale = clamp(next, MIN_SCALE, MAX_SCALE);
   const el = document.getElementById("zoomReadout");
   if (el) el.textContent = Math.round(document.getElementById("world").clientWidth / viewScale) + "m";
 }
-document.getElementById("zoomInBtn").addEventListener("click", () => setScale(viewScale * 1.4));
-document.getElementById("zoomOutBtn").addEventListener("click", () => setScale(viewScale / 1.4));
+function setAutoZoom(enabled) {
+  autoZoomEnabled = enabled;
+  autoZoomBtn.classList.toggle("active", enabled);
+  autoZoomBtn.setAttribute("aria-pressed", String(enabled));
+}
+function manualZoom(next) { setAutoZoom(false); setScale(next); }
+document.getElementById("zoomInBtn").addEventListener("click", () => manualZoom(viewScale * 1.4));
+document.getElementById("zoomOutBtn").addEventListener("click", () => manualZoom(viewScale / 1.4));
+autoZoomBtn.addEventListener("click", () => setAutoZoom(!autoZoomEnabled));
 // Start pulled back enough to see a decent slice of the course on a map.
 setScale(2.2);
 
@@ -186,6 +196,7 @@ let pinchStart = null;
 const worldCanvas = document.getElementById("world");
 worldCanvas.addEventListener("touchstart", (e) => {
   if (e.touches.length === 2) {
+    setAutoZoom(false);
     pinchStart = { d: touchDist(e.touches), scale: viewScale };
   }
 }, { passive: true });
@@ -196,7 +207,31 @@ worldCanvas.addEventListener("touchmove", (e) => {
   }
 }, { passive: true });
 worldCanvas.addEventListener("touchend", () => { pinchStart = null; }, { passive: true });
+worldCanvas.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  manualZoom(viewScale * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
+}, { passive: false });
 function touchDist(t) { return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY); }
+
+function updateAutoZoom() {
+  if (!autoZoomEnabled || !myInitialized) return;
+  const points = lastSnapshotBoats
+    .filter(b => b.connected)
+    .map(b => ({ x: b.worldX, y: b.worldY }));
+  if (roomStatus === "lobby" || raceClock < PRESTART_SECONDS) {
+    points.push({ x: startLine.pinX, y: startLine.y }, { x: startLine.boatEndX, y: startLine.y });
+  } else if (myRace.status !== "finished") {
+    points.push(currentMarkFor(myRace.leg));
+  }
+  let maxDx = 10, maxDy = 10;
+  for (const p of points) {
+    maxDx = Math.max(maxDx, Math.abs(p.x - myBoat.worldX));
+    maxDy = Math.max(maxDy, Math.abs(p.y - myBoat.worldY));
+  }
+  const w = worldCanvas.clientWidth, h = worldCanvas.clientHeight;
+  const target = clamp(Math.min((w * 0.42) / maxDx, (h * 0.36) / maxDy), MIN_SCALE, MAX_SCALE);
+  setScale(lerp(viewScale, target, 0.035));
+}
 
 // ---------- networking ----------
 function connect() {
@@ -816,6 +851,7 @@ function frame(now) {
   const dt = clamp((now - lastFrameT) / 1000, 0, 1 / 20);
   lastFrameT = now;
   const info = stepLocalPrediction(dt);
+  updateAutoZoom();
   drawWorld(info, dt);
   drawTape();
   drawTrim();
