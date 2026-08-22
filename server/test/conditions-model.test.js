@@ -21,8 +21,8 @@ test("new room connections default to Lyttelton Harbour", async () => {
 
   await worker.fetch(new Request("https://finnracing.test/ws/abc?name=Skipper"), env);
 
-  assert.equal(forwardedUrl.searchParams.get("lat"), "-43.6105");
-  assert.equal(forwardedUrl.searchParams.get("lon"), "172.724");
+  assert.equal(forwardedUrl.searchParams.get("lat"), "-43.6198028");
+  assert.equal(forwardedUrl.searchParams.get("lon"), "172.7193694");
   assert.equal(forwardedUrl.searchParams.get("brg"), "75");
 });
 

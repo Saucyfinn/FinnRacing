@@ -314,14 +314,14 @@ function updateVenuePickerReadout() {
 function initVenuePicker() {
   if (!window.L || venuePickerMap) return;
   venuePickerMap = window.L.map("venueMap", {
-    center: [-43.6084, 172.7351], zoom: 13, minZoom: 5, maxZoom: 20,
+    center: [-43.61765, 172.73047], zoom: 13, minZoom: 5, maxZoom: 20,
     maxBounds: [[-48.5, 164.5], [-32.5, 180]], maxBoundsViscosity: 0.8
   });
   window.L.tileLayer("/tiles/{z}/{x}/{y}.webp", {
     minZoom: 5, maxZoom: 20, attribution: "Imagery © LINZ · CC BY 4.0"
   }).addTo(venuePickerMap);
-  venueStartMarker = window.L.marker([-43.6105, 172.724], { draggable: true, title: "START" }).addTo(venuePickerMap).bindTooltip("START", { permanent: true, direction: "right" });
-  venueWindwardMarker = window.L.marker([-43.6062, 172.7462], { draggable: true, title: "WINDWARD" }).addTo(venuePickerMap).bindTooltip("WINDWARD", { permanent: true, direction: "right" });
+  venueStartMarker = window.L.marker([-43.6198028, 172.7193694], { draggable: true, title: "START" }).addTo(venuePickerMap).bindTooltip("START", { permanent: true, direction: "right" });
+  venueWindwardMarker = window.L.marker([-43.6154969, 172.7415674], { draggable: true, title: "WINDWARD" }).addTo(venuePickerMap).bindTooltip("WINDWARD", { permanent: true, direction: "right" });
   venueCourseLine = window.L.polyline([venueStartMarker.getLatLng(), venueWindwardMarker.getLatLng()], { color: "#4fc3f7", weight: 3, dashArray: "7 5" }).addTo(venuePickerMap);
   venueStartMarker.on("drag", updateCoursePicker); venueWindwardMarker.on("drag", updateCoursePicker);
   venuePickerMap.on("move zoom", updateVenuePickerReadout);
