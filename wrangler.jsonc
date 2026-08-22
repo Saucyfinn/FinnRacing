@@ -1,5 +1,5 @@
 {
-  "$schema": "./server/node_modules/wrangler/config-schema.json",
+  "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "finnracing",
   "main": "server/src/index.js",
   "compatibility_date": "2026-08-01",
