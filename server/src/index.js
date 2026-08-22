@@ -8,6 +8,7 @@ const TILE_RE = /^\/tiles\/(\d{1,2})\/(\d{1,7})\/(\d{1,7})\.(png|webp|jpeg)$/;
 // Imagery is CC BY 4.0 — the client renders the required attribution.
 const LINZ_TILE_BASE = "https://basemaps.linz.govt.nz/v1/tiles/aerial/3857";
 const TILE_CACHE_SECONDS = 60 * 60 * 24 * 30;
+const DEFAULT_VENUE = { lat: "-41.285", lon: "174.825", brg: "340" };
 
 // Where LINZ actually has aerial imagery. Outside these boxes it answers 200
 // with a solid pale-grey placeholder rather than 404, so we can't detect the
@@ -78,6 +79,14 @@ export default {
       const stub = env.RACE_ROOM.get(id);
       const forward = new URL(request.url);
       forward.pathname = "/ws";
+      // Existing Durable Object rooms created before map support may still
+      // hold a null venue. Supplying the default on reconnect upgrades them,
+      // while rooms that already chose a venue ignore these parameters.
+      if (!forward.searchParams.has("lat") || !forward.searchParams.has("lon")) {
+        forward.searchParams.set("lat", DEFAULT_VENUE.lat);
+        forward.searchParams.set("lon", DEFAULT_VENUE.lon);
+        forward.searchParams.set("brg", DEFAULT_VENUE.brg);
+      }
       return stub.fetch(new Request(forward.toString(), request));
     }
 
