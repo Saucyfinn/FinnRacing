@@ -3,7 +3,7 @@ import {
   clamp, wrap360,
   windAt, freshBoatState, stepBoatKinematics,
   freshRaceState, stepRace, stepRules, applyPenaltyOverride, updatePenaltyProgress,
-  spawnPositions, PRESTART_SECONDS, RACE_TIMEOUT_SECONDS
+  spawnPositions, startLineForBoatCount, PRESTART_SECONDS, RACE_TIMEOUT_SECONDS
 } from "./physics.js";
 
 const BOAT_COLORS = ["#e2ece9", "#6fa9d9", "#f0c581", "#c98bd8", "#7fd1a8", "#e2726f"];
@@ -17,7 +17,7 @@ export class RaceRoom {
   constructor(state, env) {
     this.state = state;
     this.env = env;
-    this.sessions = new Map(); // WebSocket -> { id, name, boatIndex }
+    this.sessions = new Map(); // WebSocket -> { id, name, boatIndex|null }
     this.boats = [];           // parallel arrays, index = boatIndex (seat), sparse-safe
     this.races = [];
     this.connected = [];       // boolean per seat
@@ -33,6 +33,7 @@ export class RaceRoom {
     this.venue = null;
     this.roomStatus = "lobby"; // lobby | prestart | racing | finished
     this.raceClock = 0;
+    this.startLine = startLineForBoatCount(0);
     this.hostId = null;
     this.restartTimer = 0;
     this.tickHandle = null;
@@ -86,36 +87,23 @@ export class RaceRoom {
   }
 
   acceptSession(ws, name) {
-    const seat = this.freeSeat();
-    if (seat === -1) {
-      ws.accept();
-      ws.send(JSON.stringify({ t: "full" }));
-      ws.close(1013, "room full");
-      return;
-    }
     ws.accept();
     const id = crypto.randomUUID();
     if (!this.hostId) this.hostId = id;
-
-    const spawn = spawnPositions(seat + 1, this.currentWind())[seat];
-    const boat = freshBoatState(spawn.headingDeg);
-    boat.worldX = spawn.x; boat.worldY = spawn.y;
-    this.boats[seat] = boat;
-    this.races[seat] = freshRaceState();
-    this.races[seat].prevWorldX = spawn.x;
-    this.races[seat].prevWorldY = spawn.y;
-    this.connected[seat] = true;
-    this.names[seat] = String(name).slice(0, 16) || "Sailor";
-
-    this.sessions.set(ws, { id, name: this.names[seat], boatIndex: seat });
+    const cleanName = String(name).slice(0, 16) || "Sailor";
+    const session = { id, name: cleanName, boatIndex: null };
+    this.sessions.set(ws, session);
+    if (this.roomStatus === "lobby") this.assignSeat(session);
 
     ws.addEventListener("message", (evt) => this.handleMessage(ws, evt.data));
     ws.addEventListener("close", () => this.handleClose(ws));
     ws.addEventListener("error", () => this.handleClose(ws));
 
     ws.send(JSON.stringify({
-      t: "welcome", youId: id, boatIndex: seat, color: BOAT_COLORS[seat % BOAT_COLORS.length],
-      isHost: id === this.hostId, maxBoats: MAX_BOATS, venue: this.venue
+      t: "welcome", youId: id, boatIndex: session.boatIndex,
+      color: session.boatIndex == null ? "#6b8599" : BOAT_COLORS[session.boatIndex % BOAT_COLORS.length],
+      isHost: id === this.hostId, waiting: session.boatIndex == null,
+      maxBoats: MAX_BOATS, venue: this.venue, startLine: this.startLine
     }));
     this.broadcastRoster();
     this.ensureTicking();
@@ -126,11 +114,20 @@ export class RaceRoom {
     if (!session) return;
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
-    const boat = this.boats[session.boatIndex];
-    const race = this.races[session.boatIndex];
-    if (!boat || !race) return;
+    if (msg.t === "rename") {
+      const nm = String(msg.name || "").slice(0, 16);
+      if (nm) {
+        session.name = nm;
+        if (session.boatIndex != null) this.names[session.boatIndex] = nm;
+        this.broadcastRoster();
+      }
+      return;
+    }
 
-    if (msg.t === "input") {
+    const boat = session.boatIndex == null ? null : this.boats[session.boatIndex];
+    const race = session.boatIndex == null ? null : this.races[session.boatIndex];
+
+    if (msg.t === "input" && boat && race) {
       if (typeof msg.targetHeadingDeg === "number" && isFinite(msg.targetHeadingDeg)) {
         // A penalty in progress overrides player steering server-side each
         // tick anyway (applyPenaltyOverride), so it's safe to just record intent.
@@ -141,7 +138,7 @@ export class RaceRoom {
         boat.trimAngleDeg = clamp(msg.trimAngleDeg, -90, 90);
       }
     } else if (msg.t === "start") {
-      if (session.id === this.hostId && this.roomStatus === "lobby") {
+      if (session.id === this.hostId && session.boatIndex != null && this.roomStatus === "lobby") {
         this.beginRace();
       }
     } else if (msg.t === "venue") {
@@ -158,9 +155,6 @@ export class RaceRoom {
           : (this.venue ? this.venue.bearingDeg : Math.floor(Math.random() * 360))
       };
       this.broadcastRoster();
-    } else if (msg.t === "rename") {
-      const nm = String(msg.name || "").slice(0, 16);
-      if (nm) { this.names[session.boatIndex] = nm; this.broadcastRoster(); }
     }
   }
 
@@ -168,16 +162,18 @@ export class RaceRoom {
     const session = this.sessions.get(ws);
     if (!session) return;
     this.sessions.delete(ws);
-    this.connected[session.boatIndex] = false;
+    if (session.boatIndex != null) this.connected[session.boatIndex] = false;
     // Leave the boat's simulation state in place but stop it from actively
     // steering — it holds its current heading/trim rather than teleporting
     // away or vanishing mid-fleet.
-    const boat = this.boats[session.boatIndex];
+    const boat = session.boatIndex == null ? null : this.boats[session.boatIndex];
     if (boat) boat.targetHeadingDeg = boat.headingDeg;
     if (session.id === this.hostId) {
-      const next = [...this.sessions.values()][0];
+      const next = [...this.sessions.values()].find(s => s.boatIndex != null) || [...this.sessions.values()][0];
       this.hostId = next ? next.id : null;
     }
+    if (this.roomStatus === "lobby") this.promoteWaiting();
+    if (this.roomStatus === "lobby") this.startLine = startLineForBoatCount(this.connected.filter(Boolean).length);
     this.broadcastRoster();
     if (this.sessions.size === 0) this.stopTicking();
   }
@@ -185,7 +181,8 @@ export class RaceRoom {
   beginRace() {
     const seats = [];
     for (let i = 0; i < MAX_BOATS; i++) if (this.connected[i]) seats.push(i);
-    const spawns = spawnPositions(seats.length, this.currentWind());
+    this.startLine = startLineForBoatCount(seats.length);
+    const spawns = spawnPositions(seats.length, this.currentWind(), this.startLine);
     seats.forEach((seat, k) => {
       const spawn = spawns[k];
       const fresh = freshBoatState(spawn.headingDeg);
@@ -198,6 +195,33 @@ export class RaceRoom {
     this.raceClock = 0;
     this.roomStatus = "prestart";
     this.broadcast({ t: "start_countdown", prestartSeconds: PRESTART_SECONDS });
+    this.broadcastRoster();
+  }
+
+  assignSeat(session) {
+    const seat = this.freeSeat();
+    if (seat === -1) return false;
+    const spawn = spawnPositions(seat + 1, this.currentWind())[seat];
+    const boat = freshBoatState(spawn.headingDeg);
+    boat.worldX = spawn.x; boat.worldY = spawn.y;
+    this.boats[seat] = boat;
+    this.races[seat] = freshRaceState();
+    this.races[seat].prevWorldX = spawn.x;
+    this.races[seat].prevWorldY = spawn.y;
+    this.connected[seat] = true;
+    this.names[seat] = session.name;
+    session.boatIndex = seat;
+    if (this.roomStatus === "lobby") {
+      const entered = this.connected.filter(Boolean).length;
+      this.startLine = startLineForBoatCount(entered);
+    }
+    return true;
+  }
+
+  promoteWaiting() {
+    for (const session of this.sessions.values()) {
+      if (session.boatIndex == null && !this.assignSeat(session)) break;
+    }
   }
 
   ensureTicking() {
@@ -229,7 +253,7 @@ export class RaceRoom {
         applyPenaltyOverride(boat, rs);
         stepBoatKinematics(boat, wind, dt);
         updatePenaltyProgress(boat, rs, dt);
-        stepRace(boat, rs, this.raceClock, dt);
+        stepRace(boat, rs, this.raceClock, dt, this.startLine);
       }
       const activeBoats = activeSeats.map(i => this.boats[i]);
       const activeRaces = activeSeats.map(i => this.races[i]);
@@ -247,7 +271,11 @@ export class RaceRoom {
         }
       } else if (this.roomStatus === "finished") {
         this.restartTimer -= dt;
-        if (this.restartTimer <= 0 && activeSeats.length > 0) this.beginRace();
+        if (this.restartTimer <= 0) {
+          this.roomStatus = "lobby";
+          this.promoteWaiting();
+          this.broadcastRoster();
+        }
       }
     }
 
@@ -263,12 +291,15 @@ export class RaceRoom {
   }
 
   broadcastRoster() {
-    const roster = [];
-    for (let i = 0; i < MAX_BOATS; i++) {
-      if (!this.boats[i]) continue;
-      roster.push({ boatIndex: i, name: this.names[i], connected: !!this.connected[i], color: BOAT_COLORS[i % BOAT_COLORS.length] });
-    }
-    this.broadcast({ t: "roster", roster, hostId: this.hostId, roomStatus: this.roomStatus, venue: this.venue });
+    const roster = [...this.sessions.values()].map(session => ({
+      id: session.id,
+      boatIndex: session.boatIndex,
+      name: session.name,
+      connected: true,
+      waiting: session.boatIndex == null,
+      color: session.boatIndex == null ? "#6b8599" : BOAT_COLORS[session.boatIndex % BOAT_COLORS.length]
+    }));
+    this.broadcast({ t: "roster", roster, hostId: this.hostId, roomStatus: this.roomStatus, venue: this.venue, startLine: this.startLine });
   }
 
   broadcastSnapshot(wind, activeSeats) {
@@ -287,7 +318,7 @@ export class RaceRoom {
     });
     this.broadcast({
       t: "snapshot", serverTimeMs: Date.now(), wind: { dir: round2(wind.dir), speed: round2(wind.speed) },
-      roomStatus: this.roomStatus, raceClock: round2(this.raceClock), boats
+      roomStatus: this.roomStatus, raceClock: round2(this.raceClock), startLine: this.startLine, boats
     });
   }
 

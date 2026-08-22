@@ -35,10 +35,11 @@ if (!roomId) {
 }
 document.getElementById("linkInput").value = location.href;
 document.getElementById("roomLabel").textContent = "room " + roomId;
+document.getElementById("headerRoom").textContent = "ROOM " + roomId.toUpperCase();
 
 // ---------- state ----------
 let ws = null, wsRetries = 0, intentionalClose = false;
-let myId = null, myBoatIndex = null, myColor = "#e2ece9", isHost = false, maxBoats = 6;
+let myId = null, myBoatIndex = null, myColor = "#e2ece9", isHost = false, isWaiting = false, maxBoats = 6;
 let myInitialized = false;
 let authoritative = null;
 const myBoat = freshBoatState(0);
@@ -46,6 +47,7 @@ let myRace = { status: "prestart", leg: 1, ocs: false, finishTime: null, place: 
 let wind = { dir: 0, speed: 10 };
 let roomStatus = "lobby";
 let raceClock = 0;
+let startLine = { pinX: PIN_X, boatEndX: BOAT_END_X, y: START_Y, lengthM: BOAT_END_X - PIN_X };
 let lastSnapshotBoats = [];
 const remoteBuffers = {}; // boatIndex -> [{tRecv, worldX, worldY, headingDeg, speedKnots, tackSign, name, color, connected, race}]
 const wakeMap = {}; // boatIndex -> [{x,y,age}]
@@ -57,6 +59,8 @@ const copyLinkBtn = document.getElementById("copyLinkBtn");
 const rosterList = document.getElementById("rosterList");
 const rosterCount = document.getElementById("rosterCount");
 const rosterMax = document.getElementById("rosterMax");
+const waitingList = document.getElementById("waitingList");
+const waitingCount = document.getElementById("waitingCount");
 const lobbyStatus = document.getElementById("lobbyStatus");
 const startBtn = document.getElementById("startBtn");
 const lobby = document.getElementById("lobby");
@@ -170,7 +174,7 @@ fetch("/api/config")
 function setScale(next) {
   viewScale = clamp(next, MIN_SCALE, MAX_SCALE);
   const el = document.getElementById("zoomReadout");
-  if (el) el.textContent = Math.round(innerWidth / viewScale) + "m";
+  if (el) el.textContent = Math.round(document.getElementById("world").clientWidth / viewScale) + "m";
 }
 document.getElementById("zoomInBtn").addEventListener("click", () => setScale(viewScale * 1.4));
 document.getElementById("zoomOutBtn").addEventListener("click", () => setScale(viewScale / 1.4));
@@ -235,52 +239,80 @@ function onServerMessage(msg) {
   if (msg.t === "full") {
     lobbyStatus.textContent = "room is full (" + maxBoats + "/" + maxBoats + ") — waiting for a seat to free up";
   } else if (msg.t === "welcome") {
-    myId = msg.youId; myBoatIndex = msg.boatIndex; myColor = msg.color; isHost = msg.isHost; maxBoats = msg.maxBoats;
+    myId = msg.youId; myBoatIndex = msg.boatIndex; myColor = msg.color; isHost = msg.isHost; isWaiting = !!msg.waiting; maxBoats = msg.maxBoats;
     rosterMax.textContent = maxBoats;
     // The room, not your link, decides where the course is — so late joiners
     // land on the same patch of water as everyone else.
     venue = msg.venue || null;
+    if (msg.startLine) startLine = msg.startLine;
     applyVenueToUi();
   } else if (msg.t === "roster") {
     roomStatus = msg.roomStatus;
+    if (msg.startLine) startLine = msg.startLine;
     if (msg.venue !== undefined) { venue = msg.venue; applyVenueToUi(); }
     renderRoster(msg.roster, msg.hostId);
   } else if (msg.t === "start_countdown") {
-    lobby.classList.add("hide");
+    if (!isWaiting) lobby.classList.add("hide");
   } else if (msg.t === "snapshot") {
     onSnapshot(msg);
   }
 }
 
 function renderRoster(roster, hostId) {
-  rosterCount.textContent = roster.filter(r => r.connected).length;
+  const joined = roster.filter(r => !r.waiting);
+  const waiting = roster.filter(r => r.waiting);
+  rosterCount.textContent = joined.length;
+  waitingCount.textContent = waiting.length;
   rosterList.innerHTML = "";
-  roster.forEach(r => {
+  waitingList.innerHTML = "";
+  const own = roster.find(r => r.id === myId);
+  if (own) {
+    isWaiting = !!own.waiting;
+    if (!isWaiting && myBoatIndex == null) {
+      myBoatIndex = own.boatIndex;
+      myColor = own.color;
+      myInitialized = false;
+    }
+  }
+  function addRosterRow(target, r, suffix) {
     const row = document.createElement("div");
-    row.className = "fleet-row" + (r.boatIndex === myBoatIndex ? " me" : "");
+    row.className = "fleet-row" + (r.id === myId ? " me" : "");
     const dot = document.createElement("span");
-    dot.className = "dot"; dot.style.background = r.color; dot.style.opacity = r.connected ? "1" : "0.35";
+    dot.className = "dot"; dot.style.background = r.color;
     const nm = document.createElement("span");
     nm.className = "nm";
-    nm.textContent = r.name + (r.connected ? "" : " (left)");
-    row.appendChild(dot); row.appendChild(nm);
-    rosterList.appendChild(row);
-  });
+    nm.textContent = r.name + (r.id === hostId ? " · host" : "");
+    const st = document.createElement("span");
+    st.className = "st"; st.textContent = suffix;
+    row.appendChild(dot); row.appendChild(nm); row.appendChild(st);
+    target.appendChild(row);
+  }
+  joined.forEach(r => addRosterRow(rosterList, r, "ready"));
+  waiting.forEach((r, i) => addRosterRow(waitingList, r, "#" + (i + 1)));
+  if (!joined.length) rosterList.innerHTML = '<div class="empty-roster">No sailors joined yet</div>';
+  if (!waiting.length) waitingList.innerHTML = '<div class="empty-roster">Lobby is clear</div>';
   isHost = myId && myId === hostId;
   if (roomStatus === "lobby") {
-    startBtn.disabled = !isHost;
-    startBtn.textContent = isHost ? "START RACE" : "WAITING FOR HOST";
-    startBtn.classList.toggle("active", isHost);
+    lobby.classList.remove("hide");
+    startBtn.disabled = !isHost || isWaiting;
+    startBtn.textContent = isWaiting ? "WAITING FOR A RACE SEAT" : (isHost ? "START 3:00 SEQUENCE" : "WAITING FOR HOST");
+    startBtn.classList.toggle("active", isHost && !isWaiting);
   } else {
-    lobby.classList.add("hide");
+    if (isWaiting) {
+      lobby.classList.remove("hide");
+      startBtn.disabled = true;
+      startBtn.textContent = "RACE IN PROGRESS · WAITING FOR NEXT START";
+      startBtn.classList.remove("active");
+    } else lobby.classList.add("hide");
   }
 }
 
 function onSnapshot(msg) {
   wind.dir = msg.wind.dir; wind.speed = msg.wind.speed;
   roomStatus = msg.roomStatus; raceClock = msg.raceClock;
+  if (msg.startLine) startLine = msg.startLine;
   lastSnapshotBoats = msg.boats;
-  if (roomStatus !== "lobby") lobby.classList.add("hide");
+  if (roomStatus !== "lobby" && !isWaiting) lobby.classList.add("hide");
   const now = performance.now();
   for (const b of msg.boats) {
     if (b.boatIndex === myBoatIndex) {
@@ -481,8 +513,8 @@ const world = document.getElementById("world");
 const wctx = world.getContext("2d");
 function resizeWorld() {
   const dpr = window.devicePixelRatio || 1;
-  world.width = innerWidth * dpr; world.height = innerHeight * dpr;
-  world.style.width = innerWidth + "px"; world.style.height = innerHeight + "px";
+  const w = world.clientWidth, h = world.clientHeight;
+  world.width = w * dpr; world.height = h * dpr;
   wctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 window.addEventListener("resize", resizeWorld);
@@ -586,7 +618,7 @@ function maybePushWake(boatIndex, x, y, speedKnots) {
 }
 
 function drawWorld(info, dt) {
-  const w = innerWidth, h = innerHeight;
+  const w = world.clientWidth, h = world.clientHeight;
   const cx = w / 2, cy = h / 2;
 
   const g = wctx.createLinearGradient(0, 0, 0, h);
@@ -633,8 +665,8 @@ function drawWorld(info, dt) {
 
   // start/finish line + windward mark
   const anyOcs = lastSnapshotBoats.some(b => b.race.ocs);
-  const [pinSx, pinSy] = toScreen(PIN_X, START_Y);
-  const [endSx, endSy] = toScreen(BOAT_END_X, START_Y);
+  const [pinSx, pinSy] = toScreen(startLine.pinX, startLine.y);
+  const [endSx, endSy] = toScreen(startLine.boatEndX, startLine.y);
   wctx.strokeStyle = anyOcs ? "#e2726f" : "rgba(226,236,233,0.5)";
   wctx.lineWidth = 1.6; wctx.setLineDash([5, 5]);
   wctx.beginPath(); wctx.moveTo(pinSx, pinSy); wctx.lineTo(endSx, endSy); wctx.stroke();
@@ -719,7 +751,7 @@ function updateRaceHud() {
   } else if (raceClock < PRESTART_SECONDS) {
     elRaceClock.textContent = "PRESTART · " + fmtClock(PRESTART_SECONDS - raceClock);
     elRaceLeg.textContent = myRace.ocs ? "OCS — get back below the line" : "→ start line";
-    updateMarkPointer({ x: (PIN_X + BOAT_END_X) / 2, y: START_Y });
+    updateMarkPointer({ x: (startLine.pinX + startLine.boatEndX) / 2, y: startLine.y });
   } else {
     elRaceClock.textContent = "RACE · " + fmtClock(raceClock - PRESTART_SECONDS);
     elRaceLeg.textContent = myRace.leg === 1 ? "→ windward mark" : "→ finish";

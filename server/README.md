@@ -106,8 +106,11 @@ tabs/windows to test a race against yourself.
 - **No matchmaking queue.** Racing happens via a shared room link, not
   auto-paired quick-match — that was the scope picked for this version.
 - **Imagery is NZ-only.** LINZ covers New Zealand; a course set anywhere else
-  gets blank water rather than an error. Supporting elsewhere means adding a
-  second tile source behind the same `/tiles` route.
+  gets blank water rather than an error. The `/tiles` proxy gates on a coverage
+  bounding box and returns 204 outside it — LINZ itself answers out-of-coverage
+  requests with a valid grey placeholder tile, not a 404, so the gap can't be
+  detected from the response. Supporting elsewhere means adding a second tile
+  source behind the same route.
 - **The course doesn't know where the land is.** Marks are placed purely by the
   wind axis, so a course set close inshore can put the windward mark on a beach.
   Fixing that properly needs a coastline check against LINZ vector data.

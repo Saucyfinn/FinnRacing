@@ -65,10 +65,13 @@ export const STERNWAY_DRIFT_FACTOR = 0.06;
 export const MPS_PER_KNOT = 0.5144;
 
 // ---------- course: windward/leeward, one lap, finish at the start line ----------
-export const PIN_X = -20, BOAT_END_X = 20, START_Y = 0;
+export const FINN_LENGTH_M = 4.5;
+export const START_LINE_LENGTH_PER_BOAT = 1.5;
+export const MIN_START_LINE_LENGTH_M = 20;
+export const PIN_X = -10, BOAT_END_X = 10, START_Y = 0;
 export const WINDWARD_MARK = { x: 0, y: -150 };
 export const MARK_RADIUS = 8;
-export const PRESTART_SECONDS = 20;
+export const PRESTART_SECONDS = 180;
 export const RACE_TIMEOUT_SECONDS = 240;
 
 // ---------- right-of-way rules ----------
@@ -88,6 +91,11 @@ export function crossedLine(prevX, prevY, curX, curY, lineY, xMin, xMax) {
   const xAt = prevX + (curX - prevX) * t;
   if (xAt < xMin || xAt > xMax) return null;
   return south2north ? "south-to-north" : "north-to-south";
+}
+
+export function startLineForBoatCount(count) {
+  const lengthM = Math.max(MIN_START_LINE_LENGTH_M, Math.max(0, count) * FINN_LENGTH_M * START_LINE_LENGTH_PER_BOAT);
+  return { pinX: -lengthM / 2, boatEndX: lengthM / 2, y: START_Y, lengthM };
 }
 
 export function idealTrimAngle(twaDeg) { return clamp(twaDeg * 0.5, 6, 80); }
@@ -178,9 +186,9 @@ export function currentMarkFor(rs) {
   return rs.leg === 1 ? WINDWARD_MARK : { x: (PIN_X + BOAT_END_X) / 2, y: START_Y };
 }
 
-export function stepRace(s, rs, raceClock, dt) {
+export function stepRace(s, rs, raceClock, dt, startLine = { pinX: PIN_X, boatEndX: BOAT_END_X, y: START_Y }) {
   if (rs.status === "finished") { rs.prevWorldX = s.worldX; rs.prevWorldY = s.worldY; return; }
-  const crossing = crossedLine(rs.prevWorldX, rs.prevWorldY, s.worldX, s.worldY, START_Y, Math.min(PIN_X, BOAT_END_X), Math.max(PIN_X, BOAT_END_X));
+  const crossing = crossedLine(rs.prevWorldX, rs.prevWorldY, s.worldX, s.worldY, startLine.y, Math.min(startLine.pinX, startLine.boatEndX), Math.max(startLine.pinX, startLine.boatEndX));
   const afterStart = raceClock >= PRESTART_SECONDS;
 
   if (rs.status === "prestart") {
@@ -261,13 +269,13 @@ export function stepRules(boats, races, wind, dt) {
 
 // Spread N starting positions along the start line, all on a reaching
 // heading roughly wind ± 70deg so nobody spawns already in the no-go zone.
-export function spawnPositions(count, wind) {
-  const usableWidth = (BOAT_END_X - PIN_X) - 6;
+export function spawnPositions(count, wind, startLine = startLineForBoatCount(count)) {
+  const usableWidth = (startLine.boatEndX - startLine.pinX) - 6;
   const out = [];
   for (let i = 0; i < count; i++) {
     const t = count === 1 ? 0.5 : i / (count - 1);
-    const x = PIN_X + 3 + usableWidth * t;
-    const y = START_Y + 12 + (i % 2 === 0 ? 3 : 0);
+    const x = startLine.pinX + 3 + usableWidth * t;
+    const y = startLine.y + 12 + (i % 2 === 0 ? 3 : 0);
     const heading = wrap360(wind.dir + (i % 2 === 0 ? 70 : -70));
     out.push({ x, y, headingDeg: heading });
   }

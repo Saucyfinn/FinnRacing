@@ -5,21 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>FinnRacing &mdash; Online</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230c1a1f'/%3E%3Cpath d='M16 5 L24 24 L16 21 L8 24 Z' fill='%23dba85a'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
-
 <style>
   :root {
-    --bg: #0c1a1f;
-    --water-a: #0e2530;
-    --water-b: #0a1c24;
-    --surface: #122228;
-    --surface-alt: #182d33;
-    --ink: #e2ece9;
-    --ink-dim: #b7c7c5;
-    --muted: #7d9997;
-    --border: #274045;
-    --accent: #dba85a;
-    --accent-strong: #f0c581;
+    --bg: #0a1628;
+    --water-a: #0d2137;
+    --water-b: #081220;
+    --surface: #0d2137;
+    --surface-alt: #0a1e35;
+    --ink: #e0e8f0;
+    --ink-dim: #b7c9d8;
+    --muted: #6b8599;
+    --border: #1a3a55;
+    --accent: #4fc3f7;
+    --accent-strong: #8bdcff;
     --port: #e2726f;
     --starboard: #5fc28c;
     --danger: #e2726f;
@@ -31,39 +29,45 @@
   html, body {
     margin: 0; height: 100%; overflow: hidden;
     background: var(--bg); color: var(--ink);
-    font-family: "Public Sans", system-ui, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
     touch-action: none;
     user-select: none;
   }
 
-  #world { position: fixed; inset: 0; display: block; }
+  #world { position: fixed; top: 56px; left: 260px; right: 0; bottom: 0; display: block; }
+  .app-header { position:fixed; z-index:30; top:0; left:0; right:0; height:56px; background:#081220; border-bottom:1px solid var(--border); padding:0 20px; display:flex; align-items:center; justify-content:space-between; }
+  .brand { display:flex; align-items:center; gap:10px; font-weight:800; letter-spacing:.01em; }
+  .brand-mark { width:25px; height:31px; filter:drop-shadow(0 1px 3px rgba(0,0,0,.6)); }
+  .brand span { color:var(--accent); }
+  .header-room { color:var(--muted); font-size:12px; font-weight:600; }
 
   .hud {
-    position: fixed; inset: 0;
+    position: fixed; top: 56px; left: 0; bottom: 0; width: 260px;
+    background: var(--surface); border-right: 1px solid var(--border);
     pointer-events: none;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    padding: max(14px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom));
+    padding: 16px;
     gap: 8px;
   }
   .hud * { pointer-events: auto; }
 
   .top-stack { display: flex; flex-direction: column; gap: 8px; }
-  .top-bar { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .top-bar { display: flex; flex-direction: column; gap: 10px; }
 
   .card {
-    background: rgba(18,34,40,0.82);
+    background: var(--surface-alt);
     backdrop-filter: blur(6px);
     border: 1px solid var(--border);
     border-radius: 10px;
     padding: 10px 14px;
   }
 
-  .doc-title { font-family: "Fraunces", Georgia, serif; font-weight: 600; font-size: 15px; letter-spacing: -0.01em; margin: 0 0 2px; }
+  .doc-title { font-weight: 700; color: var(--accent); font-size: 15px; letter-spacing: -0.01em; margin: 0 0 2px; }
   .doc-sub { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; color: var(--muted); letter-spacing: 0.03em; }
 
-  .readouts { display: grid; grid-template-columns: repeat(2, auto); gap: 2px 18px; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12.5px; }
+  .readouts { display: grid; grid-template-columns: 1fr auto; gap: 5px 18px; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12.5px; }
   .readouts .lbl { color: var(--muted); }
   .readouts .val { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; font-weight: 500; }
   .readouts .val.warn { color: var(--danger); }
@@ -110,7 +114,7 @@
   button.ghost.active { color: var(--bg); background: var(--accent); border-color: var(--accent); }
   button.ghost:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
-  .controls { display: flex; flex-direction: column; gap: 10px; }
+  .controls { position:fixed; left:276px; right:16px; bottom:16px; display:flex; flex-direction:column; gap:10px; }
   .control-block { background: rgba(18,34,40,0.82); backdrop-filter: blur(6px); border: 1px solid var(--border); border-radius: 12px; padding: 8px 10px 10px; }
   .control-label { display: flex; justify-content: space-between; align-items: center; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 4px; padding: 0 2px; }
   .control-label b { color: var(--accent-strong); font-weight: 500; }
@@ -123,12 +127,12 @@
   /* ---- lobby overlay ---- */
   #lobby {
     position: fixed; inset: 0; z-index: 20;
-    background: radial-gradient(120% 100% at 50% 0%, #14282f 0%, #081217 100%);
+    background: rgba(8,18,32,.88); backdrop-filter: blur(10px);
     display: flex; align-items: center; justify-content: center; padding: 20px;
   }
   #lobby.hide { display: none; }
-  .lobby-panel { width: min(420px, 100%); display: flex; flex-direction: column; gap: 16px; }
-  .lobby-title { font-family: "Fraunces", Georgia, serif; font-weight: 600; font-size: 26px; margin: 0; }
+  .lobby-panel { width:min(720px,100%); max-height:calc(100vh - 88px); overflow-y:auto; display:flex; flex-direction:column; gap:16px; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:22px; box-shadow:0 18px 60px rgba(0,0,0,.38); }
+  .lobby-title { font-weight:750; color:var(--accent); font-size:24px; margin:0; }
   .lobby-sub { color: var(--muted); font-size: 13px; margin: -10px 0 0; }
   .lobby-field label { display: block; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
   .lobby-field input[type=text] {
@@ -139,6 +143,11 @@
   .link-row input { flex: 1; }
   .link-row button { flex: none; }
   .roster-box { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .roster-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .roster-box.waiting { background:var(--surface-alt); }
+  .empty-roster { color:var(--muted); font-size:12px; padding:7px 0; }
+  .start-callout { display:flex; justify-content:space-between; align-items:center; background:#0a1e35; border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
+  .start-callout strong { color:var(--accent); font-size:18px; font-variant-numeric:tabular-nums; }
   .roster-box .rb-title { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 8px; }
   #startBtn { width: 100%; padding: 13px; font-size: 13px; border-radius: 10px; }
   .lobby-hint { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; color: var(--muted); text-align: center; }
@@ -172,6 +181,12 @@
   .attribution.show { display: block; }
 
   @media (max-width: 480px) {
+    #world { left:0; }
+    .hud { left:0; width:100%; background:transparent; border:0; padding:10px; }
+    .top-bar { flex-direction:row; }
+    .controls { left:10px; right:10px; bottom:10px; }
+    .roster-grid { grid-template-columns:1fr; }
+    .header-room { display:none; }
     .card { padding: 8px 10px; }
     .readouts { font-size: 11.5px; }
   }
@@ -181,12 +196,21 @@
 
 <canvas id="world"></canvas>
 
+<header class="app-header">
+  <div class="brand">
+    <svg class="brand-mark" viewBox="0 0 28 36" aria-hidden="true"><path d="M14 2 L22 28 Q14 34 6 28 Z" fill="#4fc3f7" stroke="rgba(255,255,255,.9)" stroke-width="1.5"/><path d="M14 6 L14 24 L20 22 Z" fill="rgba(255,255,255,.3)"/></svg>
+    Finn<span>Racing</span>
+  </div>
+  <div class="header-room" id="headerRoom">LIVE GAME</div>
+</header>
+
 <div id="lobby">
   <div class="lobby-panel">
     <div>
       <p class="lobby-title">FinnRacing</p>
-      <p class="lobby-sub">Small-fleet racing, Finn-dinghy physics, real right-of-way rules.</p>
+      <p class="lobby-sub">Live fleet racing in the Finn Track view.</p>
     </div>
+    <div class="start-callout"><span>Official start sequence</span><strong>3:00</strong></div>
     <div class="lobby-field">
       <label>Your name</label>
       <input type="text" id="nameInput" maxlength="16" placeholder="Sailor" autocomplete="off">
@@ -212,13 +236,19 @@
       </div>
       <p class="venue-status" id="venueStatus">open water &mdash; set a position to race on the real map</p>
     </div>
-    <div class="roster-box">
-      <div class="rb-title">IN THIS ROOM (<span id="rosterCount">0</span>/<span id="rosterMax">6</span>)</div>
-      <div id="rosterList"></div>
+    <div class="roster-grid">
+      <div class="roster-box">
+        <div class="rb-title">JOINED RACE (<span id="rosterCount">0</span>/<span id="rosterMax">6</span>)</div>
+        <div id="rosterList"></div>
+      </div>
+      <div class="roster-box waiting">
+        <div class="rb-title">WAITING IN LOBBY (<span id="waitingCount">0</span>)</div>
+        <div id="waitingList"></div>
+      </div>
     </div>
     <p class="lobby-status" id="lobbyStatus">connecting&hellip;</p>
     <button class="ghost active" id="startBtn" type="button" disabled>WAITING FOR HOST</button>
-    <p class="lobby-hint">Boats already in the room can free-sail and get a feel for the wind before the start.</p>
+    <p class="lobby-hint">Joined sailors can free-sail before the start. Late arrivals remain here and are moved into the next available race.</p>
   </div>
 </div>
 

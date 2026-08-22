@@ -54,9 +54,9 @@ export const STERNWAY_DRIFT_FACTOR = 0.06;
 export const MPS_PER_KNOT = 0.5144;
 export const PX_PER_METER = 6.5;
 
-export const PIN_X = -20, BOAT_END_X = 20, START_Y = 0;
+export const PIN_X = -10, BOAT_END_X = 10, START_Y = 0;
 export const WINDWARD_MARK = { x: 0, y: -150 };
-export const PRESTART_SECONDS = 20;
+export const PRESTART_SECONDS = 180;
 
 export function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
 export function bearingTo(fromX, fromY, toX, toY) {
