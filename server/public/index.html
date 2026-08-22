@@ -257,7 +257,9 @@
     body.race-active .fleet-card { display:none; }
     body.race-active .race-bar {
       position:fixed; z-index:12;
-      top:max(6px, env(safe-area-inset-top)); left:8px; right:8px;
+      top:max(10px, env(safe-area-inset-top));
+      left:max(8px, env(safe-area-inset-left));
+      right:max(8px, env(safe-area-inset-right));
       min-height:42px; padding:7px 9px; gap:5px 9px;
       background:rgba(8,18,32,.78); backdrop-filter:blur(8px);
       border-color:rgba(79,195,247,.32);
@@ -269,7 +271,8 @@
     body.race-active #restartRaceBtn { width:auto; padding:0 6px; font-size:8px; }
     body.race-active .readouts {
       position:fixed; z-index:11;
-      top:calc(max(6px, env(safe-area-inset-top)) + 50px); right:8px;
+      top:calc(max(10px, env(safe-area-inset-top)) + 58px);
+      right:max(8px, env(safe-area-inset-right));
       width:132px; padding:6px 8px; gap:3px 8px;
       background:rgba(8,18,32,.70); border-color:rgba(26,58,85,.65);
       font-size:10px;
@@ -282,7 +285,9 @@
     body.race-active .readout-row[data-readout="sea"] { display:grid; }
     body.race-active .tack-badge { grid-column:1/-1; margin-top:3px; padding:2px 6px; font-size:9px; }
     body.race-active .controls {
-      z-index:12; left:8px; right:8px;
+      z-index:12;
+      left:max(8px, env(safe-area-inset-left));
+      right:max(8px, env(safe-area-inset-right));
       bottom:max(8px, env(safe-area-inset-bottom)); gap:0;
     }
     body.race-active .controls .heading-control {
@@ -485,7 +490,7 @@
     <div class="card fleet-card" id="fleetCard"></div>
   </div>
 
-  <div class="stall-banner ocs-banner" id="ocsBanner">OCS &mdash; RETURN BEHIND THE LINE</div>
+  <div class="stall-banner ocs-banner" id="ocsBanner">OCS &mdash; RETURN BEHIND THE LINE, THEN RE-CROSS</div>
   <div class="stall-banner" id="stallBanner">IN IRONS &mdash; NO DRIVE</div>
   <div class="stall-banner dirty-wind-banner" id="dirtyWindBanner">DIRTY AIR</div>
   <div class="stall-banner penalty-banner" id="penaltyBanner">PENALTY &mdash; <span id="penaltyRule"></span><span class="p-deg" id="penaltyDeg"></span><button class="ghost active penalty-auto" id="autoPenaltyBtn" type="button">AUTO TURN ON</button></div>

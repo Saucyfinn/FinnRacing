@@ -1367,9 +1367,15 @@ function updateRaceHud() {
     elRaceClock.textContent = "FINISHED — " + place + " · " + (myRace.finishTime || 0).toFixed(1) + "s";
     elRaceLeg.textContent = "next race starts automatically";
     elMarkArrow.style.opacity = 0; elMarkDist.textContent = "";
+  } else if (myRace.ocs) {
+    elRaceClock.textContent = "OCS";
+    elRaceLeg.textContent = raceClock < prestartSeconds
+      ? "return behind the line, then re-cross"
+      : "return and re-cross the start line to start";
+    updateMarkPointer({ x: (startLine.pinX + startLine.boatEndX) / 2, y: startLine.y });
   } else if (raceClock < prestartSeconds) {
     elRaceClock.textContent = "PRESTART · " + fmtClock(prestartSeconds - raceClock);
-    elRaceLeg.textContent = myRace.ocs ? "OCS — get back below the line" : "→ start line";
+    elRaceLeg.textContent = "→ start line";
     updateMarkPointer({ x: (startLine.pinX + startLine.boatEndX) / 2, y: startLine.y });
   } else {
     elRaceClock.textContent = "RACE · " + fmtClock(raceClock - prestartSeconds);
@@ -1377,7 +1383,7 @@ function updateRaceHud() {
     elRaceLeg.textContent = legLabels[myRace.leg] || "→ next mark";
     updateMarkPointer(currentMarkFor(myRace.leg, windwardMark, startLine, gateConfig));
   }
-  elOcs.classList.toggle("show", myRace.ocs && raceClock < prestartSeconds);
+  elOcs.classList.toggle("show", myRace.ocs);
   elPenalty.classList.toggle("show", myRace.penalty.active || myRace.penalty.pending);
   elDsq.classList.toggle("show", myRace.status === "disqualified");
   const solidHit = myRace.obstacle && myRace.obstacle.active;

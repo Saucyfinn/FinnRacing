@@ -193,6 +193,29 @@ test("custom start sequence controls when a line crossing starts the race", () =
   assert.equal(race.status, "racing");
 });
 
+test("an OCS boat must return behind the line and re-cross after the start", () => {
+  const boat = freshBoatState(0);
+  const race = freshRaceState();
+  boat.worldX = 0; boat.worldY = -1;
+  race.prevWorldX = 0; race.prevWorldY = 1;
+  stepRace(boat, race, 59, 0, undefined, 60);
+  assert.equal(race.ocs, true);
+
+  // The start signal alone does not clear OCS or start the boat.
+  race.prevWorldY = -1; boat.worldY = -2;
+  stepRace(boat, race, 60, 0, undefined, 60);
+  assert.equal(race.status, "prestart");
+  assert.equal(race.ocs, true);
+
+  // Return to the pre-start side, then cross the line again.
+  race.prevWorldY = -1; boat.worldY = 1;
+  stepRace(boat, race, 61, 0, undefined, 60);
+  assert.equal(race.ocs, false);
+  race.prevWorldY = 1; boat.worldY = -1;
+  stepRace(boat, race, 62, 0, undefined, 60);
+  assert.equal(race.status, "racing");
+});
+
 test("downwind return crossing completes the race", () => {
   const boat = freshBoatState(180);
   const race = freshRaceState();
