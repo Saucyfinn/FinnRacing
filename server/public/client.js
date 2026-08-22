@@ -314,7 +314,7 @@ function updateVenuePickerReadout() {
 function initVenuePicker() {
   if (!window.L || venuePickerMap) return;
   venuePickerMap = window.L.map("venueMap", {
-    center: [-41.0, 172.5], zoom: 5, minZoom: 5, maxZoom: 20,
+    center: [-43.6084, 172.7351], zoom: 13, minZoom: 5, maxZoom: 20,
     maxBounds: [[-48.5, 164.5], [-32.5, 180]], maxBoundsViscosity: 0.8
   });
   window.L.tileLayer("/tiles/{z}/{x}/{y}.webp", {
