@@ -563,6 +563,7 @@ function onServerMessage(msg) {
   } else if (msg.t === "start_countdown") {
     if (msg.prestartSeconds) prestartSeconds = msg.prestartSeconds;
     if (!isWaiting) lobby.classList.add("hide");
+    updateRaceLayout();
   } else if (msg.t === "snapshot") {
     onSnapshot(msg);
   }
@@ -631,6 +632,15 @@ function renderRoster(roster, hostId) {
     } else lobby.classList.add("hide");
   }
   for (const input of [skipperWeightInput, sailChoiceInput, mastPositionInput, rigTensionInput]) input.disabled = roomStatus !== "lobby";
+  updateRaceLayout();
+}
+
+function updateRaceLayout() {
+  const active = roomStatus !== "lobby" && !isWaiting;
+  document.body.classList.toggle("race-active", active);
+  requestAnimationFrame(() => {
+    resizeWorld();
+  });
 }
 
 function onSnapshot(msg) {
@@ -643,6 +653,7 @@ function onSnapshot(msg) {
   if (msg.windwardMark) windwardMark = msg.windwardMark;
   lastSnapshotBoats = msg.boats;
   if (roomStatus !== "lobby" && !isWaiting) lobby.classList.add("hide");
+  updateRaceLayout();
   const now = performance.now();
   for (const b of msg.boats) {
     if (b.boatIndex === myBoatIndex) {

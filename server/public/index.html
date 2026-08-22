@@ -230,6 +230,63 @@
     .card { padding: 8px 10px; }
     .readouts { font-size: 11.5px; }
   }
+
+  /* Phone race mode: the water is the interface. Lobby/setup remains a
+     normal scrollable screen; these rules activate only after joining a race. */
+  @media (max-width: 768px) {
+    body.race-active .app-header { display:none; }
+    body.race-active #world {
+      inset:0; width:100vw; height:100dvh;
+    }
+    body.race-active .hud {
+      inset:0; width:100vw; height:100dvh; padding:0;
+      border:0; background:transparent;
+    }
+    body.race-active .top-stack { display:contents; }
+    body.race-active .top-bar { display:contents; }
+    body.race-active .top-bar > .card:first-child,
+    body.race-active .fleet-card { display:none; }
+    body.race-active .race-bar {
+      position:fixed; z-index:12;
+      top:max(6px, env(safe-area-inset-top)); left:8px; right:8px;
+      min-height:42px; padding:7px 9px; gap:5px 9px;
+      background:rgba(8,18,32,.78); backdrop-filter:blur(8px);
+      border-color:rgba(79,195,247,.32);
+    }
+    body.race-active .race-bar .race-clock { font-size:12px; }
+    body.race-active .race-bar .race-leg { font-size:9.5px; max-width:42vw; }
+    body.race-active .race-bar .zoom-group { margin-left:auto; }
+    body.race-active .zoom-readout { display:none; }
+    body.race-active #restartRaceBtn { width:auto; padding:0 6px; font-size:8px; }
+    body.race-active .readouts {
+      position:fixed; z-index:11;
+      top:calc(max(6px, env(safe-area-inset-top)) + 50px); right:8px;
+      width:132px; padding:6px 8px; gap:3px 8px;
+      background:rgba(8,18,32,.70); border-color:rgba(26,58,85,.65);
+      font-size:10px;
+    }
+    body.race-active .readouts > :nth-child(-n+4),
+    body.race-active .readouts > :nth-child(9),
+    body.race-active .readouts > :nth-child(10) { display:none; }
+    body.race-active .tack-badge { grid-column:1/-1; margin-top:3px; padding:2px 6px; font-size:9px; }
+    body.race-active .controls {
+      z-index:12; left:8px; right:8px;
+      bottom:max(8px, env(safe-area-inset-bottom)); gap:0;
+    }
+    body.race-active .controls .control-block:first-child {
+      padding:6px; background:rgba(8,18,32,.72); border-color:rgba(26,58,85,.65);
+    }
+    body.race-active .controls .control-block:nth-child(2),
+    body.race-active .controls .legend { display:none; }
+    body.race-active .controls .control-label { margin:0 2px 3px; font-size:9px; }
+    body.race-active #headingTape { height:54px; }
+    body.race-active .stall-banner {
+      z-index:14; max-width:calc(100vw - 20px); padding:5px 9px;
+      font-size:9.5px; text-align:center; background:rgba(46,20,28,.88);
+    }
+    body.race-active .penalty-banner .penalty-auto { margin-left:5px; padding:3px 5px; font-size:8px; }
+    body.race-active .attribution { bottom:calc(max(8px, env(safe-area-inset-bottom)) + 76px); }
+  }
 </style>
 </head>
 <body>
