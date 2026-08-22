@@ -79,6 +79,7 @@ const restartRaceBtn = document.getElementById("restartRaceBtn");
 const aiOpponentCount = document.getElementById("aiOpponentCount");
 const aiFleetApplyBtn = document.getElementById("aiFleetApplyBtn");
 const aiFleetStatus = document.getElementById("aiFleetStatus");
+const aiAggressiveToggle = document.getElementById("aiAggressiveToggle");
 const skipperWeightInput = document.getElementById("skipperWeight");
 const sailChoiceInput = document.getElementById("sailChoice");
 const mastPositionInput = document.getElementById("mastPosition");
@@ -299,6 +300,11 @@ function applyAiFleet() {
 }
 aiFleetApplyBtn.addEventListener("click", applyAiFleet);
 aiOpponentCount.addEventListener("change", applyAiFleet);
+aiAggressiveToggle.addEventListener("change", () => {
+  if (!isHost || roomStatus !== "lobby" || !ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ t: "ai_aggression", aggressive: aiAggressiveToggle.checked }));
+  aiFleetStatus.textContent = aiAggressiveToggle.checked ? "Aggressive AI enabled." : "Safe-separation AI enabled.";
+});
 
 function setConnDot(ok) { connDot.classList.toggle("bad", !ok); }
 
@@ -667,6 +673,7 @@ function onServerMessage(msg) {
         + ". Conditions freeze when the sequence starts.";
     }
     if (Number.isFinite(msg.aiCount)) aiOpponentCount.value = String(msg.aiCount);
+    if (typeof msg.aiAggressive === "boolean") aiAggressiveToggle.checked = msg.aiAggressive;
     renderRoster(msg.roster, msg.hostId);
   } else if (msg.t === "ai_fleet_result") {
     aiOpponentCount.value = String(msg.count);
@@ -724,6 +731,7 @@ function renderRoster(roster, hostId) {
   prestartSecondsInput.disabled = !isHost || roomStatus !== "lobby";
   aiOpponentCount.disabled = !isHost || roomStatus !== "lobby";
   aiFleetApplyBtn.disabled = !isHost || roomStatus !== "lobby";
+  aiAggressiveToggle.disabled = !isHost || roomStatus !== "lobby";
   restartRaceBtn.disabled = !isHost || roomStatus === "lobby";
   restartRaceBtn.style.display = isHost && roomStatus !== "lobby" ? "inline-flex" : "none";
   if (venueStartMarker && venueWindwardMarker && venueGatePortMarker && venueGateStarboardMarker) {

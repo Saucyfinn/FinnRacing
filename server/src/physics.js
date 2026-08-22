@@ -655,7 +655,9 @@ export function spawnPositions(count, wind, startLine = startLineForBoatCount(co
     const rowCount = Math.min(columns, count - row * columns);
     const x = (column - (rowCount - 1) / 2) * spacingM;
     const y = startLine.y + 14 + row * spacingM;
-    const heading = wrap360(wind.dir + (i % 2 === 0 ? 70 : -70));
+    // Every entrant begins on starboard tack (positive signed TWA), avoiding
+    // an immediate Rule 10 give-way situation while the room initializes.
+    const heading = wrap360(wind.dir - 70);
     out.push({ x, y, headingDeg: heading });
   }
   return out;

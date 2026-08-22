@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { RaceRoom } from "../src/raceRoom.js";
-import { RACE_ENTRY_IMMUNITY_SEC, spawnPositions, stepBoatKinematics, stepRace } from "../src/physics.js";
+import { RACE_ENTRY_IMMUNITY_SEC, spawnPositions, stepBoatKinematics, stepRace, stepRules, wrap180 } from "../src/physics.js";
 
 function room() { return new RaceRoom({}, {}); }
 
@@ -35,18 +35,46 @@ test("AI fleet requests return a confirmed opponent count", () => {
   assert.deepEqual(replies.at(-1), { t: "ai_fleet_result", count: 2, limited: false });
 });
 
+test("the host can toggle aggressive AI sailing", () => {
+  const raceRoom = room();
+  const ws = { send() {} };
+  raceRoom.hostId = "host";
+  raceRoom.sessions.set(ws, { id: "host", boatIndex: 0 });
+  raceRoom.handleMessage(ws, JSON.stringify({ t: "ai_aggression", aggressive: true }));
+  assert.equal(raceRoom.aiAggressive, true);
+  raceRoom.handleMessage(ws, JSON.stringify({ t: "ai_aggression", aggressive: false }));
+  assert.equal(raceRoom.aiAggressive, false);
+});
+
 test("race-entry staging gives every boat generous separation and rules immunity", () => {
   for (let count = 2; count <= 6; count++) {
     const positions = spawnPositions(count, { dir: 0, speed: 12 });
     for (let i = 0; i < positions.length; i++) for (let j = i + 1; j < positions.length; j++) {
       assert.ok(Math.hypot(positions[i].x - positions[j].x, positions[i].y - positions[j].y) >= 11);
     }
+    assert.ok(positions.every(position => wrap180(0 - position.headingDeg) > 0), "every entrant starts on starboard tack");
   }
 
   const raceRoom = room();
   raceRoom.setAiCount(3);
   raceRoom.beginRace();
   for (const seat of raceRoom.aiSeats) assert.equal(raceRoom.races[seat].immunityTimer, RACE_ENTRY_IMMUNITY_SEC);
+});
+
+test("a five-boat AI fleet holds separated lanes without entry penalties", () => {
+  const raceRoom = room();
+  raceRoom.prestartSeconds = 180;
+  raceRoom.setAiCount(5);
+  raceRoom.beginRace();
+  const seats = [...raceRoom.aiSeats];
+  for (let tick = 0; tick < 300; tick++) {
+    raceRoom.raceClock = tick * 0.1;
+    for (const seat of seats) raceRoom.steerAi(seat);
+    const wind = raceRoom.currentWind();
+    for (const seat of seats) stepBoatKinematics(raceRoom.boats[seat], wind, 0.1, raceRoom.waterCurrent);
+    stepRules(seats.map(seat => raceRoom.boats[seat]), seats.map(seat => raceRoom.races[seat]), wind, 0.1, seats);
+  }
+  assert.deepEqual(seats.map(seat => raceRoom.races[seat].penalty.count), [0, 0, 0, 0, 0]);
 });
 
 test("the course axis aligns to the wind when the start sequence begins", () => {

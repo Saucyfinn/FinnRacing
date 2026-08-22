@@ -12,6 +12,7 @@ import { loadLandCollisionMap } from "./landCollision.js";
 
 const BOAT_COLORS = ["#e2ece9", "#6fa9d9", "#f0c581", "#c98bd8", "#7fd1a8", "#e2726f"];
 const RESTART_DELAY_SEC = 6;
+const AI_ENTRY_SETTLE_SEC = 30;
 // One RaceRoom Durable Object instance = one race room (fleet of up to
 // MAX_BOATS boats). The room is addressed by a short room code the client
 // picks, so no separate "create room" API call is needed — the Worker maps
@@ -27,6 +28,7 @@ export class RaceRoom {
     this.names = [];
     this.setups = [];
     this.aiSeats = new Set();
+    this.aiAggressive = false;
     this.activeHails = new Map();
     this.hailCooldowns = new Map();
     this.markRoomRights = new Map();
@@ -204,6 +206,12 @@ export class RaceRoom {
       const requestedCount = clamp(Math.round(Number(msg.count) || 0), 0, MAX_BOATS - 1);
       this.setAiCount(requestedCount);
       ws.send(JSON.stringify({ t: "ai_fleet_result", count: this.aiSeats.size, limited: this.aiSeats.size < requestedCount }));
+      return;
+    }
+    if (msg.t === "ai_aggression") {
+      if (this.roomStatus !== "lobby" || session.id !== this.hostId) return;
+      this.aiAggressive = msg.aggressive === true;
+      this.broadcastRoster();
       return;
     }
     if (msg.t === "restart") {
@@ -419,6 +427,12 @@ export class RaceRoom {
     }
     if (race.status === "prestart") {
       const remaining = this.prestartSeconds - this.raceClock;
+      if (this.raceClock < AI_ENTRY_SETTLE_SEC) {
+        // Newly-entered AI boats sail parallel starboard-tack lanes before
+        // beginning independent starting routines, so their paths cannot cross.
+        boat.targetHeadingDeg = wrap360(this.currentWind().dir - 70);
+        return;
+      }
       if (race.ocs) {
         // Return completely to the prestart side before making another run.
         this.steerAiTo(seat, clamp(boat.worldX, this.startLine.pinX + 2, this.startLine.boatEndX - 2), 8, false);
@@ -434,9 +448,10 @@ export class RaceRoom {
       } else {
         // Sail a compact racetrack behind the line instead of disappearing on
         // a fixed reach. The waypoint remains inside the visible start box.
-        const holdPhase = this.raceClock * 0.16 + seat * 1.9;
-        const holdX = clamp(slotX + Math.sin(holdPhase) * 5, this.startLine.pinX + 2, this.startLine.boatEndX - 2);
-        const holdY = 10 + (Math.cos(holdPhase) + 1) * 3;
+        // Assigned lanes do not cross. Alternating fore/aft rows preserve
+        // separation even when five AI boats share the start area.
+        const holdX = slotX;
+        const holdY = 12 + (fleetOrder % 2) * 10;
         this.steerAiTo(seat, holdX, holdY, false);
       }
       return;
@@ -478,10 +493,14 @@ export class RaceRoom {
       const other = this.boats[otherSeat];
       if (!other || otherSeat === seat || !this.connected[otherSeat]) continue;
       const separation = Math.hypot(other.worldX - boat.worldX, other.worldY - boat.worldY);
-      if (separation >= 7) continue;
+      const avoidanceDistance = this.aiAggressive ? 9 : 14;
+      if (separation >= avoidanceDistance) continue;
       const otherBearing = bearingTo(boat.worldX, boat.worldY, other.worldX, other.worldY);
       const side = (((otherBearing - desired + 540) % 360) - 180) >= 0 ? -1 : 1;
-      desired = wrap360(desired + side * (8 - separation) * 4);
+      const mustGiveWay = boat.tackSign < 0 && other.tackSign > 0;
+      const urgency = clamp((avoidanceDistance - separation) / Math.max(5, avoidanceDistance - 4), 0, 1);
+      const baseTurn = this.aiAggressive ? 7 : 12;
+      desired = wrap360(desired + side * ((mustGiveWay ? 24 : baseTurn) + urgency * (this.aiAggressive ? 22 : 32)));
     }
     boat.targetHeadingDeg = wrap360(desired);
   }
@@ -662,7 +681,7 @@ export class RaceRoom {
       id: "ai-" + seat, boatIndex: seat, name: this.names[seat], connected: true, waiting: false, ai: true,
       setup: this.setups[seat], color: BOAT_COLORS[seat % BOAT_COLORS.length]
     });
-    this.broadcast({ t: "roster", roster, hostId: this.hostId, roomStatus: this.roomStatus, venue: this.venue, startLine: this.startLine, windwardMark: this.windwardMark, gateConfig: this.gateConfig, conditions: this.waterCurrent, conditionModel: this.conditionModel, prestartSeconds: this.prestartSeconds, aiCount: this.aiSeats.size });
+    this.broadcast({ t: "roster", roster, hostId: this.hostId, roomStatus: this.roomStatus, venue: this.venue, startLine: this.startLine, windwardMark: this.windwardMark, gateConfig: this.gateConfig, conditions: this.waterCurrent, conditionModel: this.conditionModel, prestartSeconds: this.prestartSeconds, aiCount: this.aiSeats.size, aiAggressive: this.aiAggressive });
   }
 
   broadcastSnapshot(wind, activeSeats) {
