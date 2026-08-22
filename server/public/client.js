@@ -2,7 +2,7 @@ import {
   D2R, clamp, lerp, wrap360, wrap180,
   NO_GO_HALF, TRIM_MAX_ERROR, PX_PER_METER,
   PIN_X, BOAT_END_X, START_Y, WINDWARD_MARK, PRESTART_SECONDS,
-  idealTrimAngle, stepBoatKinematics, freshBoatState,
+  idealTrimAngle, stepBoatKinematics, freshBoatState, normalizeBoatSetup, boatSetupPerformance,
   dist, bearingTo, currentMarkFor
 } from "./physics-client.js";
 import { localToLatLon, latLonToPixel, metersPerPixel, bestZoomFor, TILE_SIZE } from "./geo.js";
@@ -66,6 +66,58 @@ const lobbyStatus = document.getElementById("lobbyStatus");
 const startBtn = document.getElementById("startBtn");
 const lobby = document.getElementById("lobby");
 const connDot = document.getElementById("connDot");
+const skipperWeightInput = document.getElementById("skipperWeight");
+const sailChoiceInput = document.getElementById("sailChoice");
+const mastPositionInput = document.getElementById("mastPosition");
+const rigTensionInput = document.getElementById("rigTension");
+const mastPositionValue = document.getElementById("mastPositionValue");
+const rigTensionValue = document.getElementById("rigTensionValue");
+const setupHint = document.getElementById("setupHint");
+
+function readBoatSetup() {
+  return normalizeBoatSetup({
+    skipperWeightKg: skipperWeightInput.value,
+    sailChoice: sailChoiceInput.value,
+    mastPositionMm: mastPositionInput.value,
+    rigTensionKg: rigTensionInput.value
+  });
+}
+function writeBoatSetup(setupValue) {
+  const setup = normalizeBoatSetup(setupValue);
+  skipperWeightInput.value = setup.skipperWeightKg;
+  sailChoiceInput.value = setup.sailChoice;
+  mastPositionInput.value = setup.mastPositionMm;
+  rigTensionInput.value = setup.rigTensionKg;
+  myBoat.setup = setup;
+  updateSetupReadout();
+}
+function updateSetupReadout() {
+  const setup = readBoatSetup();
+  mastPositionValue.textContent = setup.mastPositionMm.toFixed(0) + " mm";
+  rigTensionValue.textContent = setup.rigTensionKg.toFixed(1) + " kg";
+  const effectiveSpeed = myDirtyWind.exposure01 > 0.01 ? myDirtyWind.effectiveSpeed : wind.speed;
+  const effect = boatSetupPerformance(setup, effectiveSpeed);
+  setupHint.textContent = "Effective " + effectiveSpeed.toFixed(1) + " kt · Analyzer target "
+    + effect.targetMastPositionMm.toFixed(1) + " mm / " + effect.targetRigTensionKg.toFixed(1)
+    + " kg · rig match " + Math.round(effect.rigMatch01 * 100) + "%";
+}
+function saveAndSendSetup(send) {
+  const setup = readBoatSetup();
+  myBoat.setup = setup;
+  localStorage.setItem("finnracing_setup", JSON.stringify(setup));
+  updateSetupReadout();
+  if (send && ws && ws.readyState === WebSocket.OPEN && roomStatus === "lobby") {
+    ws.send(JSON.stringify({ t: "setup", setup }));
+  }
+}
+try {
+  const savedSetup = JSON.parse(localStorage.getItem("finnracing_setup") || "null");
+  if (savedSetup) writeBoatSetup(savedSetup); else writeBoatSetup(myBoat.setup);
+} catch { writeBoatSetup(myBoat.setup); }
+for (const input of [skipperWeightInput, sailChoiceInput, mastPositionInput, rigTensionInput]) {
+  input.addEventListener("input", () => saveAndSendSetup(false));
+  input.addEventListener("change", () => saveAndSendSetup(true));
+}
 
 nameInput.value = localStorage.getItem("finnracing_name") || "";
 nameInput.addEventListener("change", () => {
@@ -278,6 +330,9 @@ function connect() {
   const proto = location.protocol === "https:" ? "wss://" : "ws://";
   const name = (nameInput.value || "Sailor").trim().slice(0, 16);
   const q = new URLSearchParams({ name: (nameInput.value || "Sailor").trim().slice(0, 16) });
+  const setup = readBoatSetup();
+  q.set("weight", setup.skipperWeightKg); q.set("sail", setup.sailChoice);
+  q.set("mast", setup.mastPositionMm); q.set("tension", setup.rigTensionKg);
   // Carry any venue from the link through to the room, so opening a shared
   // course link actually lands you on that patch of water.
   const here = new URLSearchParams(location.search);
@@ -319,6 +374,7 @@ function onServerMessage(msg) {
     // The room, not your link, decides where the course is — so late joiners
     // land on the same patch of water as everyone else.
     venue = msg.venue || null;
+    if (msg.setup) writeBoatSetup(msg.setup);
     if (msg.startLine) startLine = msg.startLine;
     applyVenueToUi();
   } else if (msg.t === "roster") {
@@ -342,6 +398,7 @@ function renderRoster(roster, hostId) {
   waitingList.innerHTML = "";
   const own = roster.find(r => r.id === myId);
   if (own) {
+    if (own.setup) writeBoatSetup(own.setup);
     isWaiting = !!own.waiting;
     if (!isWaiting && myBoatIndex == null) {
       myBoatIndex = own.boatIndex;
@@ -362,7 +419,7 @@ function renderRoster(roster, hostId) {
     row.appendChild(dot); row.appendChild(nm); row.appendChild(st);
     target.appendChild(row);
   }
-  joined.forEach(r => addRosterRow(rosterList, r, "ready"));
+  joined.forEach(r => addRosterRow(rosterList, r, r.setup ? r.setup.sailChoice + " · " + Math.round(r.setup.skipperWeightKg) + "kg" : "ready"));
   waiting.forEach((r, i) => addRosterRow(waitingList, r, "#" + (i + 1)));
   if (!joined.length) rosterList.innerHTML = '<div class="empty-roster">No sailors joined yet</div>';
   if (!waiting.length) waitingList.innerHTML = '<div class="empty-roster">Lobby is clear</div>';
@@ -383,6 +440,7 @@ function renderRoster(roster, hostId) {
       startBtn.classList.remove("active");
     } else lobby.classList.add("hide");
   }
+  for (const input of [skipperWeightInput, sailChoiceInput, mastPositionInput, rigTensionInput]) input.disabled = roomStatus !== "lobby";
 }
 
 function onSnapshot(msg) {
@@ -402,6 +460,8 @@ function onSnapshot(msg) {
       }
       authoritative = b;
       if (b.dirtyWind) myDirtyWind = b.dirtyWind;
+      if (b.setup) myBoat.setup = normalizeBoatSetup(b.setup);
+      if (b.setupEffect) myBoat.setupEffect = b.setupEffect;
       myRace = b.race;
     } else {
       let buf = remoteBuffers[b.boatIndex];
@@ -409,7 +469,7 @@ function onSnapshot(msg) {
       buf.push({
         tRecv: now, worldX: b.worldX, worldY: b.worldY, headingDeg: b.headingDeg,
         speedKnots: b.speedKnots, tackSign: b.tackSign, name: b.name, color: b.color,
-        connected: b.connected, race: b.race, dirtyWind: b.dirtyWind
+        connected: b.connected, race: b.race, dirtyWind: b.dirtyWind, setup: b.setup, setupEffect: b.setupEffect
       });
       while (buf.length > 12) buf.shift();
     }
@@ -458,7 +518,7 @@ function getRemoteRenderState(boatIndex) {
         headingDeg: a.headingDeg + wrap180(b.headingDeg - a.headingDeg) * t,
         speedKnots: lerp(a.speedKnots, b.speedKnots, t),
         tackSign: b.tackSign, name: b.name, color: b.color, connected: b.connected, race: b.race,
-        dirtyWind: b.dirtyWind
+        dirtyWind: b.dirtyWind, setup: b.setup, setupEffect: b.setupEffect
       };
     }
   }
@@ -801,6 +861,7 @@ const elWind = document.getElementById("rWind");
 const elTwa = document.getElementById("rTwa");
 const elSpeed = document.getElementById("rSpeed");
 const elHeading = document.getElementById("rHeading");
+const elSetup = document.getElementById("rSetup");
 const elTack = document.getElementById("tackBadge");
 const elStall = document.getElementById("stallBanner");
 const elOcs = document.getElementById("ocsBanner");
@@ -896,6 +957,8 @@ function updateHud(info) {
   elSpeed.textContent = myBoat.speedKnots.toFixed(1) + " kt" + (info.drifting && myBoat.speedKnots < -0.05 ? " (sternway)" : "");
   elSpeed.classList.toggle("warn", info.drifting);
   elHeading.textContent = Math.round(trueDeg(myBoat.headingDeg)) + bearingSuffix();
+  const setupEffect = info.setupEffect || myBoat.setupEffect;
+  elSetup.textContent = myBoat.setup.sailChoice + " · " + Math.round(setupEffect.speedMultiplier * 100) + "% · rig " + Math.round(setupEffect.rigMatch01 * 100) + "%";
   elTack.textContent = myBoat.tackSign > 0 ? "STARBOARD TACK" : "PORT TACK";
   elTack.className = "tack-badge " + (myBoat.tackSign > 0 ? "starboard" : "port");
   elStall.textContent = myBoat.speedKnots < -0.05 ? "IN IRONS — DRIFTING BACKWARD" : "IN IRONS — NO DRIVE";
@@ -911,6 +974,7 @@ function updateHud(info) {
     elDirtyWind.textContent = label + (source ? " BY " + String(source.name || "BOAT").toUpperCase() : "")
       + " · −" + myDirtyWind.speedDeficitKnots.toFixed(1) + " KT";
   }
+  updateSetupReadout();
 }
 
 // ---------- main loop ----------

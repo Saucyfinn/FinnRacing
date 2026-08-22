@@ -145,6 +145,15 @@
     width: 100%; background: var(--surface-alt); border: 1px solid var(--border); color: var(--ink);
     border-radius: 8px; padding: 10px 12px; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px;
   }
+  .setup-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padding:12px; background:var(--surface-alt); border:1px solid var(--border); border-radius:10px; }
+  .setup-control label { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .setup-control label output { color:var(--accent-strong); font-variant-numeric:tabular-nums; }
+  .setup-control input[type=number], .setup-control select {
+    width:100%; background:#08182b; border:1px solid var(--border); color:var(--ink); border-radius:8px;
+    padding:9px 10px; font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:13px;
+  }
+  .setup-control input[type=range] { width:100%; accent-color:var(--accent); }
+  .setup-hint { grid-column:1/-1; color:var(--muted); font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:10.5px; line-height:1.45; }
   .link-row { display: flex; gap: 8px; }
   .link-row input { flex: 1; }
   .link-row button { flex: none; }
@@ -203,6 +212,7 @@
     .top-bar { flex-direction:row; }
     .controls { left:10px; right:10px; bottom:10px; }
     .roster-grid { grid-template-columns:1fr; }
+    .setup-grid { grid-template-columns:1fr; }
     .header-room { display:none; }
     .card { padding: 8px 10px; }
     .readouts { font-size: 11.5px; }
@@ -231,6 +241,33 @@
     <div class="lobby-field">
       <label>Your name</label>
       <input type="text" id="nameInput" maxlength="16" placeholder="Sailor" autocomplete="off">
+    </div>
+    <div class="lobby-field">
+      <label>Your Finn setup &mdash; locked when the start sequence begins</label>
+      <div class="setup-grid">
+        <div class="setup-control">
+          <label for="skipperWeight">Skipper weight</label>
+          <input type="number" id="skipperWeight" min="70" max="120" step="1" value="95" inputmode="decimal">
+        </div>
+        <div class="setup-control">
+          <label for="sailChoice">Sail</label>
+          <select id="sailChoice">
+            <option value="GS1-">GS1 minus</option>
+            <option value="GS1" selected>GS1</option>
+            <option value="GS1+">GS1 plus</option>
+            <option value="WB">WB</option>
+          </select>
+        </div>
+        <div class="setup-control">
+          <label for="mastPosition">Mast position <output id="mastPositionValue">50 mm</output></label>
+          <input type="range" id="mastPosition" min="35" max="56" step="1" value="50">
+        </div>
+        <div class="setup-control">
+          <label for="rigTension">Rig tension <output id="rigTensionValue">35.0 kg</output></label>
+          <input type="range" id="rigTension" min="30" max="40" step="0.5" value="35">
+        </div>
+        <div class="setup-hint" id="setupHint">Analyzer target updates with effective wind.</div>
+      </div>
     </div>
     <div class="lobby-field">
       <label>Share this link to invite others</label>
@@ -290,6 +327,7 @@
         <span class="lbl">twa</span><span class="val" id="rTwa">&mdash;</span>
         <span class="lbl">speed</span><span class="val" id="rSpeed">&mdash;</span>
         <span class="lbl">heading</span><span class="val" id="rHeading">&mdash;</span>
+        <span class="lbl">setup</span><span class="val" id="rSetup">&mdash;</span>
         <div class="tack-badge" id="tackBadge">&mdash;</div>
       </div>
     </div>

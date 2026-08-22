@@ -2,6 +2,7 @@ import {
   MAX_BOATS, TICK_MS, D2R,
   clamp, wrap360,
   windAt, freshBoatState, stepBoatKinematics, stepFleetDirtyWind, effectiveWindForBoat,
+  normalizeBoatSetup,
   freshRaceState, stepRace, stepRules, applyPenaltyOverride, updatePenaltyProgress,
   spawnPositions, startLineForBoatCount, PRESTART_SECONDS, RACE_TIMEOUT_SECONDS
 } from "./physics.js";
@@ -23,6 +24,7 @@ export class RaceRoom {
     this.races = [];
     this.connected = [];       // boolean per seat
     this.names = [];
+    this.setups = [];
     // baseDir is 0 by design: the whole simulation runs in a COURSE-LOCAL frame
     // where -Y is always dead upwind, which is what keeps WINDWARD_MARK an
     // actual beat and the start line square to the breeze. Where that course
@@ -55,7 +57,12 @@ export class RaceRoom {
       this.adoptVenue(url.searchParams);
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);
-      this.acceptSession(server, url.searchParams.get("name") || "Sailor");
+      this.acceptSession(server, url.searchParams.get("name") || "Sailor", {
+        skipperWeightKg: url.searchParams.get("weight"),
+        sailChoice: url.searchParams.get("sail"),
+        mastPositionMm: url.searchParams.get("mast"),
+        rigTensionKg: url.searchParams.get("tension")
+      });
       return new Response(null, { status: 101, webSocket: client });
     }
     return new Response("not found", { status: 404 });
@@ -91,12 +98,12 @@ export class RaceRoom {
     return -1;
   }
 
-  acceptSession(ws, name) {
+  acceptSession(ws, name, setupValue) {
     ws.accept();
     const id = crypto.randomUUID();
     if (!this.hostId) this.hostId = id;
     const cleanName = String(name).slice(0, 16) || "Sailor";
-    const session = { id, name: cleanName, boatIndex: null };
+    const session = { id, name: cleanName, boatIndex: null, setup: normalizeBoatSetup(setupValue) };
     this.sessions.set(ws, session);
     if (this.roomStatus === "lobby") this.assignSeat(session);
 
@@ -108,7 +115,7 @@ export class RaceRoom {
       t: "welcome", youId: id, boatIndex: session.boatIndex,
       color: session.boatIndex == null ? "#6b8599" : BOAT_COLORS[session.boatIndex % BOAT_COLORS.length],
       isHost: id === this.hostId, waiting: session.boatIndex == null,
-      maxBoats: MAX_BOATS, venue: this.venue, startLine: this.startLine
+      maxBoats: MAX_BOATS, venue: this.venue, startLine: this.startLine, setup: session.setup
     }));
     this.broadcastRoster();
     this.ensureTicking();
@@ -126,6 +133,19 @@ export class RaceRoom {
         if (session.boatIndex != null) this.names[session.boatIndex] = nm;
         this.broadcastRoster();
       }
+      return;
+    }
+    if (msg.t === "setup") {
+      // Lock the setup once the start sequence begins so it cannot be used as
+      // an in-race performance control. It can be changed again next lobby.
+      if (this.roomStatus !== "lobby") return;
+      session.setup = normalizeBoatSetup(msg.setup);
+      if (session.boatIndex != null) {
+        this.setups[session.boatIndex] = session.setup;
+        const setupBoat = this.boats[session.boatIndex];
+        if (setupBoat) setupBoat.setup = session.setup;
+      }
+      this.broadcastRoster();
       return;
     }
 
@@ -190,7 +210,7 @@ export class RaceRoom {
     const spawns = spawnPositions(seats.length, this.currentWind(), this.startLine);
     seats.forEach((seat, k) => {
       const spawn = spawns[k];
-      const fresh = freshBoatState(spawn.headingDeg);
+      const fresh = freshBoatState(spawn.headingDeg, this.setups[seat]);
       fresh.worldX = spawn.x; fresh.worldY = spawn.y;
       this.boats[seat] = fresh;
       const rs = freshRaceState();
@@ -207,7 +227,7 @@ export class RaceRoom {
     const seat = this.freeSeat();
     if (seat === -1) return false;
     const spawn = spawnPositions(seat + 1, this.currentWind())[seat];
-    const boat = freshBoatState(spawn.headingDeg);
+    const boat = freshBoatState(spawn.headingDeg, session.setup);
     boat.worldX = spawn.x; boat.worldY = spawn.y;
     this.boats[seat] = boat;
     this.races[seat] = freshRaceState();
@@ -215,6 +235,7 @@ export class RaceRoom {
     this.races[seat].prevWorldY = spawn.y;
     this.connected[seat] = true;
     this.names[seat] = session.name;
+    this.setups[seat] = session.setup;
     session.boatIndex = seat;
     if (this.roomStatus === "lobby") {
       const entered = this.connected.filter(Boolean).length;
@@ -305,6 +326,7 @@ export class RaceRoom {
       name: session.name,
       connected: true,
       waiting: session.boatIndex == null,
+      setup: session.setup,
       color: session.boatIndex == null ? "#6b8599" : BOAT_COLORS[session.boatIndex % BOAT_COLORS.length]
     }));
     this.broadcast({ t: "roster", roster, hostId: this.hostId, roomStatus: this.roomStatus, venue: this.venue, startLine: this.startLine });
@@ -318,6 +340,12 @@ export class RaceRoom {
         worldX: round2(b.worldX), worldY: round2(b.worldY), headingDeg: round2(b.headingDeg),
         speedKnots: round2(b.speedKnots), tackSign: b.tackSign, autoTrim: b.autoTrim,
         trimAngleDeg: round2(b.trimAngleDeg), trimEfficiency01: round2(b.trimEfficiency01),
+        setup: b.setup,
+        setupEffect: {
+          speedMultiplier: round3(b.setupEffect.speedMultiplier), accelerationMultiplier: round3(b.setupEffect.accelerationMultiplier),
+          pointingPenaltyDeg: round2(b.setupEffect.pointingPenaltyDeg), rigMatch01: round3(b.setupEffect.rigMatch01),
+          targetMastPositionMm: round2(b.setupEffect.targetMastPositionMm), targetRigTensionKg: round2(b.setupEffect.targetRigTensionKg)
+        },
         dirtyWind: {
           type: b.dirtyWind.type, sourceBoatIndex: b.dirtyWind.sourceBoatIndex,
           exposure01: round2(b.dirtyWind.exposure01), speedDeficitKnots: round2(b.dirtyWind.speedDeficitKnots),
@@ -345,3 +373,4 @@ export class RaceRoom {
 }
 
 function round2(n) { return Math.round(n * 100) / 100; }
+function round3(n) { return Math.round(n * 1000) / 1000; }
