@@ -104,6 +104,7 @@
   .penalty-banner { border-color: var(--port); background: rgba(168,58,58,0.18); color: #ffd9d7; }
   .stall-banner.dirty-wind-banner { border-color: #f0c581; background: rgba(240,197,129,0.18); color: #ffe8c2; }
   .penalty-banner .p-deg { font-variant-numeric: tabular-nums; margin-left: 4px; opacity: 0.85; }
+  .penalty-banner .penalty-auto { margin-left:10px; padding:3px 8px; font-size:10px; }
   .stall-banner {
     align-self: center; background: rgba(226,114,111,0.16); border: 1px solid var(--port); color: #ffd9d7;
     font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; letter-spacing: 0.06em;
@@ -385,9 +386,9 @@
       <span class="race-dist" id="markDist">&mdash;</span>
       <span class="zoom-group">
         <button class="zoom-btn auto active" id="autoZoomBtn" type="button" aria-pressed="true">AUTO</button>
-        <button class="zoom-btn" id="zoomOutBtn" type="button" aria-label="Zoom out">&minus;</button>
+        <button class="zoom-btn" id="zoomOutBtn" type="button" aria-label="Zoom out to full course extents" title="Zoom out to full course extents">&minus;</button>
         <span class="zoom-readout" id="zoomReadout">&mdash;</span>
-        <button class="zoom-btn" id="zoomInBtn" type="button" aria-label="Zoom in">+</button>
+        <button class="zoom-btn" id="zoomInBtn" type="button" aria-label="Zoom in to boat detail" title="Zoom in to boat detail">+</button>
       </span>
       <span class="conn-dot" id="connDot" title="connection"></span>
       <button class="zoom-btn" id="restartRaceBtn" type="button" disabled>RESTART</button>
@@ -399,7 +400,7 @@
   <div class="stall-banner ocs-banner" id="ocsBanner">OCS &mdash; RETURN BEHIND THE LINE</div>
   <div class="stall-banner" id="stallBanner">IN IRONS &mdash; NO DRIVE</div>
   <div class="stall-banner dirty-wind-banner" id="dirtyWindBanner">DIRTY AIR</div>
-  <div class="stall-banner penalty-banner" id="penaltyBanner">PENALTY TURN &mdash; <span id="penaltyRule"></span><span class="p-deg" id="penaltyDeg"></span></div>
+  <div class="stall-banner penalty-banner" id="penaltyBanner">PENALTY &mdash; <span id="penaltyRule"></span><span class="p-deg" id="penaltyDeg"></span><button class="ghost active penalty-auto" id="autoPenaltyBtn" type="button">AUTO TURN ON</button></div>
   <div class="stall-banner penalty-banner" id="dsqBanner">DISQUALIFIED &mdash; TWO PENALTIES</div>
   <div class="stall-banner penalty-banner" id="collisionBanner">COLLISION &mdash; BOATS STOPPED</div>
 

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { freshBoatState, freshRaceState, HULL_COLLISION_RADIUS_M, PENALTY_CLEARANCE_M, startPenalty, stepRules } from "../src/physics.js";
+import { applyPenaltyOverride, freshBoatState, freshRaceState, HULL_COLLISION_RADIUS_M, PENALTY_CLEARANCE_M, startPenalty, stepRules, updatePenaltyProgress } from "../src/physics.js";
 
 test("a collision stops and separates both boats and penalizes port tack", () => {
   const port = freshBoatState(40), starboard = freshBoatState(320);
@@ -98,4 +98,25 @@ test("a second penalty disqualifies and stops the boat", () => {
   assert.equal(race.penalty.active, false);
   assert.equal(race.penalty.pending, false);
   assert.equal(boat.speedKnots, 0);
+});
+
+test("auto penalty can be disabled and a completed turn clears its rule", () => {
+  const boat = freshBoatState(45), race = freshRaceState();
+  race.status = "racing";
+  startPenalty(boat, race, "Rule 10 — port/starboard");
+  race.penalty.pending = false;
+  race.penalty.active = true;
+
+  race.penalty.autoComplete = false;
+  boat.targetHeadingDeg = 90;
+  applyPenaltyOverride(boat, race);
+  assert.equal(boat.targetHeadingDeg, 90, "manual mode preserves helm control");
+
+  race.penalty.turnedDeg = 359;
+  race.penalty.lastHeading = 40;
+  boat.headingDeg = 45;
+  updatePenaltyProgress(boat, race, 0.1);
+  assert.equal(race.penalty.active, false);
+  assert.equal(race.penalty.turnedDeg, 0);
+  assert.equal(race.penalty.rule, null);
 });

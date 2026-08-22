@@ -396,7 +396,7 @@ export function stepBoatKinematics(s, wind, dt, waterCurrent = null) {
 export function freshRaceState() {
   return {
     status: "prestart", leg: 1, ocs: false, prevWorldX: 0, prevWorldY: 0, finishTime: null, place: null,
-    penalty: { active: false, pending: false, count: 0, turnedDeg: 0, rule: null, lastHeading: 0 }, immunityTimer: 0,
+    penalty: { active: false, pending: false, autoComplete: true, count: 0, turnedDeg: 0, rule: null, lastHeading: 0 }, immunityTimer: 0,
     collision: { active: false, timer: 0, withBoatIndex: null }
   };
 }
@@ -430,7 +430,7 @@ export function stepRace(s, rs, raceClock, dt, startLine = { pinX: PIN_X, boatEn
 
 // ---------- right-of-way: simplified RRS 10 (port/starboard) & RRS 11 (windward/leeward) ----------
 export function applyPenaltyOverride(s, rs) {
-  if (!rs.penalty.active) return;
+  if (!rs.penalty.active || !rs.penalty.autoComplete) return;
   s.targetHeadingDeg = wrap360(s.headingDeg + 45);
 }
 export function updatePenaltyProgress(s, rs, dt) {
@@ -439,6 +439,9 @@ export function updatePenaltyProgress(s, rs, dt) {
   rs.penalty.lastHeading = s.headingDeg;
   if (rs.penalty.turnedDeg >= PENALTY_TURN_DEG) {
     rs.penalty.active = false;
+    rs.penalty.pending = false;
+    rs.penalty.turnedDeg = 0;
+    rs.penalty.rule = null;
     rs.immunityTimer = PENALTY_IMMUNITY_SEC;
     s.targetHeadingDeg = s.headingDeg;
   }

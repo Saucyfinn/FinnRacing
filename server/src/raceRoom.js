@@ -206,6 +206,7 @@ export class RaceRoom {
         boat.targetHeadingDeg = wrap360(msg.targetHeadingDeg);
       }
       if (typeof msg.autoTrim === "boolean") boat.autoTrim = msg.autoTrim;
+      if (typeof msg.autoPenalty === "boolean") race.penalty.autoComplete = msg.autoPenalty;
       if (!boat.autoTrim && typeof msg.trimAngleDeg === "number" && isFinite(msg.trimAngleDeg)) {
         boat.trimAngleDeg = clamp(msg.trimAngleDeg, -90, 90);
       }
@@ -586,7 +587,7 @@ export class RaceRoom {
         },
         race: {
           status: r.status, leg: r.leg, ocs: r.ocs, finishTime: r.finishTime, place: r.place,
-          penalty: { active: r.penalty.active, pending: r.penalty.pending, count: r.penalty.count, turnedDeg: round2(r.penalty.turnedDeg), rule: r.penalty.rule },
+          penalty: { active: r.penalty.active, pending: r.penalty.pending, autoComplete: r.penalty.autoComplete, count: r.penalty.count, turnedDeg: round2(r.penalty.turnedDeg), rule: r.penalty.rule },
           collision: r.collision
         }
       };

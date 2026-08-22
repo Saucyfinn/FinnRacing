@@ -13,7 +13,9 @@ const RENDER_DELAY_MS = 150; // buffered-interpolation delay applied to *other* 
 // How many screen pixels per metre of water. Now adjustable, because once
 // there's real imagery underneath you want to pull back and see the course.
 let viewScale = PX_PER_METER;
-const MIN_SCALE = 0.9, MAX_SCALE = 10;
+// 0.08 px/m shows roughly 10–20 km on a typical display; 50 px/m gives a
+// close boat-handling view while remaining within the imagery pyramid.
+const MIN_SCALE = 0.08, MAX_SCALE = 50;
 
 // venue = { lat, lon, bearingDeg } once the server tells us where this room is.
 let venue = null;
@@ -43,7 +45,7 @@ let myId = null, myBoatIndex = null, myColor = "#e2ece9", isHost = false, isWait
 let myInitialized = false;
 let authoritative = null;
 const myBoat = freshBoatState(0);
-let myRace = { status: "prestart", leg: 1, ocs: false, finishTime: null, place: null, penalty: { active: false, pending: false, count: 0, turnedDeg: 0, rule: null } };
+let myRace = { status: "prestart", leg: 1, ocs: false, finishTime: null, place: null, penalty: { active: false, pending: false, autoComplete: true, count: 0, turnedDeg: 0, rule: null } };
 let wind = { dir: 0, speed: 10 };
 let waterCurrent = { speedKnots: 0, directionDeg: 0, seaLevelM: null, source: "manual" };
 let myDirtyWind = { type: "clean", sourceBoatIndex: null, exposure01: 0, speedDeficitKnots: 0, directionShiftDeg: 0, effectiveSpeed: 10, effectiveDir: 0 };
@@ -439,8 +441,8 @@ function setAutoZoom(enabled) {
   autoZoomBtn.setAttribute("aria-pressed", String(enabled));
 }
 function manualZoom(next) { setAutoZoom(false); setScale(next); }
-document.getElementById("zoomInBtn").addEventListener("click", () => manualZoom(viewScale * 1.4));
-document.getElementById("zoomOutBtn").addEventListener("click", () => manualZoom(viewScale / 1.4));
+document.getElementById("zoomInBtn").addEventListener("click", () => manualZoom(viewScale * 1.6));
+document.getElementById("zoomOutBtn").addEventListener("click", () => manualZoom(viewScale / 1.6));
 autoZoomBtn.addEventListener("click", () => setAutoZoom(!autoZoomEnabled));
 // Start pulled back enough to see a decent slice of the course on a map.
 setScale(2.2);
@@ -522,7 +524,8 @@ setInterval(() => {
   if (ws && ws.readyState === WebSocket.OPEN && myInitialized) {
     ws.send(JSON.stringify({
       t: "input", targetHeadingDeg: myBoat.targetHeadingDeg,
-      autoTrim: myBoat.autoTrim, trimAngleDeg: myBoat.trimAngleDeg
+      autoTrim: myBoat.autoTrim, trimAngleDeg: myBoat.trimAngleDeg,
+      autoPenalty: myRace.penalty.autoComplete
     }));
   }
 }, 66);
@@ -672,7 +675,7 @@ function onSnapshot(msg) {
 // ---------- local prediction + server reconciliation for our own boat ----------
 function stepLocalPrediction(dt) {
   if (!myInitialized) return { twaSigned: 0, absTwa: 0, inNoGo: false, drifting: false };
-  if (myRace.penalty && myRace.penalty.active) {
+  if (myRace.penalty && myRace.penalty.active && myRace.penalty.autoComplete) {
     myBoat.targetHeadingDeg = wrap360(myBoat.headingDeg + 45); // mirrors the server's forced-turn override
   }
   const localWind = mySailingWind || (myDirtyWind.exposure01 > 0.01
@@ -1142,6 +1145,7 @@ const elOcs = document.getElementById("ocsBanner");
 const elPenalty = document.getElementById("penaltyBanner");
 const elPenaltyRule = document.getElementById("penaltyRule");
 const elPenaltyDeg = document.getElementById("penaltyDeg");
+const autoPenaltyBtn = document.getElementById("autoPenaltyBtn");
 const elDsq = document.getElementById("dsqBanner");
 const elCollision = document.getElementById("collisionBanner");
 const elDirtyWind = document.getElementById("dirtyWindBanner");
@@ -1152,6 +1156,21 @@ const elRaceLeg = document.getElementById("raceLeg");
 const elMarkArrow = document.getElementById("markArrow");
 const elMarkDist = document.getElementById("markDist");
 const elFleet = document.getElementById("fleetCard");
+
+autoPenaltyBtn.addEventListener("click", () => {
+  myRace.penalty.autoComplete = !myRace.penalty.autoComplete;
+  autoPenaltyBtn.classList.toggle("active", myRace.penalty.autoComplete);
+  autoPenaltyBtn.textContent = myRace.penalty.autoComplete ? "AUTO TURN ON" : "MANUAL TURN";
+});
+
+function penaltyRuleGuidance(rule) {
+  if (!rule) return "INFRINGEMENT";
+  if (rule.includes("Rule 10")) return rule + " — PORT-TACK BOAT MUST KEEP CLEAR";
+  if (rule.includes("Rule 11")) return rule + " — WINDWARD BOAT MUST KEEP CLEAR";
+  if (rule.includes("Rule 12")) return rule + " — BOAT CLEAR ASTERN MUST KEEP CLEAR";
+  if (rule.includes("Rule 13")) return rule + " — TACKING BOAT MUST KEEP CLEAR";
+  return rule;
+}
 
 function fmtClock(sec) {
   sec = Math.max(0, Math.ceil(sec));
@@ -1200,12 +1219,14 @@ function updateRaceHud() {
   elDsq.classList.toggle("show", myRace.status === "disqualified");
   elCollision.classList.toggle("show", !!(myRace.collision && myRace.collision.active));
   if (myRace.penalty.active) {
-    elPenaltyRule.textContent = myRace.penalty.rule;
+    elPenaltyRule.textContent = penaltyRuleGuidance(myRace.penalty.rule);
     elPenaltyDeg.textContent = " " + Math.round(myRace.penalty.turnedDeg) + "°/360°";
   } else if (myRace.penalty.pending) {
-    elPenaltyRule.textContent = "PENDING — START, THEN CLEAR THE FLEET";
+    elPenaltyRule.textContent = penaltyRuleGuidance(myRace.penalty.rule) + " · PENDING — START, THEN CLEAR THE FLEET";
     elPenaltyDeg.textContent = " 1/2";
   }
+  autoPenaltyBtn.classList.toggle("active", myRace.penalty.autoComplete);
+  autoPenaltyBtn.textContent = myRace.penalty.autoComplete ? "AUTO TURN ON" : "MANUAL TURN";
 }
 
 function statusLabel(b) {
