@@ -22,6 +22,19 @@ test("host-configured AI opponents occupy real fleet seats", () => {
   assert.equal(raceRoom.connected.filter(Boolean).length, 1);
 });
 
+test("AI fleet requests return a confirmed opponent count", () => {
+  const raceRoom = room();
+  const replies = [];
+  const ws = { send: value => replies.push(JSON.parse(value)) };
+  raceRoom.hostId = "host";
+  raceRoom.sessions.set(ws, { id: "host", boatIndex: 0 });
+
+  raceRoom.handleMessage(ws, JSON.stringify({ t: "ai_fleet", count: 2 }));
+
+  assert.equal(raceRoom.aiSeats.size, 2);
+  assert.deepEqual(replies.at(-1), { t: "ai_fleet_result", count: 2, limited: false });
+});
+
 test("the course axis aligns to the wind when the start sequence begins", () => {
   const raceRoom = room();
   raceRoom.venue = { lat: -43.6198028, lon: 172.7193694, bearingDeg: 75 };

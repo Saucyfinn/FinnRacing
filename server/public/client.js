@@ -3,7 +3,7 @@ import {
   NO_GO_HALF, TRIM_MAX_ERROR, PX_PER_METER,
   FINN_LENGTH_M, FINN_BEAM_M, FINN_BOOM_OUTER_POINT_M, PIN_X, BOAT_END_X, START_Y, WINDWARD_MARK, PRESTART_SECONDS,
   idealTrimAngle, stepBoatKinematics, freshBoatState, normalizeBoatSetup, boatSetupPerformance,
-  dist, bearingTo, currentMarkFor, leewardGateForStartLine
+  dist, bearingTo, groundMotionFor, currentMarkFor, leewardGateForStartLine
 } from "./physics-client.js";
 import { localToLatLon, latLonToLocal, latLonToPixel, metersPerPixel, bestZoomFor, TILE_SIZE } from "./geo.js";
 
@@ -78,6 +78,7 @@ const connDot = document.getElementById("connDot");
 const restartRaceBtn = document.getElementById("restartRaceBtn");
 const aiOpponentCount = document.getElementById("aiOpponentCount");
 const aiFleetApplyBtn = document.getElementById("aiFleetApplyBtn");
+const aiFleetStatus = document.getElementById("aiFleetStatus");
 const skipperWeightInput = document.getElementById("skipperWeight");
 const sailChoiceInput = document.getElementById("sailChoice");
 const mastPositionInput = document.getElementById("mastPosition");
@@ -289,11 +290,15 @@ startBtn.addEventListener("click", () => {
 restartRaceBtn.addEventListener("click", () => {
   if (ws && ws.readyState === WebSocket.OPEN && isHost) ws.send(JSON.stringify({ t: "restart" }));
 });
-aiFleetApplyBtn.addEventListener("click", () => {
-  if (ws && ws.readyState === WebSocket.OPEN && isHost && roomStatus === "lobby") {
-    ws.send(JSON.stringify({ t: "ai_fleet", count: Number(aiOpponentCount.value) }));
-  }
-});
+function applyAiFleet() {
+  if (!isHost) { aiFleetStatus.textContent = "Only the room host can change AI opponents."; return; }
+  if (roomStatus !== "lobby") { aiFleetStatus.textContent = "AI opponents can only be changed before the start."; return; }
+  if (!ws || ws.readyState !== WebSocket.OPEN) { aiFleetStatus.textContent = "Waiting for the room connection…"; return; }
+  aiFleetStatus.textContent = "Adding AI opponents…";
+  ws.send(JSON.stringify({ t: "ai_fleet", count: Number(aiOpponentCount.value) }));
+}
+aiFleetApplyBtn.addEventListener("click", applyAiFleet);
+aiOpponentCount.addEventListener("change", applyAiFleet);
 
 function setConnDot(ok) { connDot.classList.toggle("bad", !ok); }
 
@@ -663,6 +668,10 @@ function onServerMessage(msg) {
     }
     if (Number.isFinite(msg.aiCount)) aiOpponentCount.value = String(msg.aiCount);
     renderRoster(msg.roster, msg.hostId);
+  } else if (msg.t === "ai_fleet_result") {
+    aiOpponentCount.value = String(msg.count);
+    aiFleetStatus.textContent = msg.count === 0 ? "AI fleet cleared." : msg.count + " AI opponent" + (msg.count === 1 ? "" : "s") + " ready in the fleet."
+      + (msg.limited ? " Fleet capacity reached." : "");
   } else if (msg.t === "start_countdown") {
     if (msg.prestartSeconds) prestartSeconds = msg.prestartSeconds;
     if (!isWaiting) lobby.classList.add("hide");
@@ -1273,6 +1282,8 @@ const elWind = document.getElementById("rWind");
 const elTwa = document.getElementById("rTwa");
 const elSpeed = document.getElementById("rSpeed");
 const elHeading = document.getElementById("rHeading");
+const elSog = document.getElementById("rSog");
+const elCog = document.getElementById("rCog");
 const elSetup = document.getElementById("rSetup");
 const elSea = document.getElementById("rSea");
 const elTack = document.getElementById("tackBadge");
@@ -1414,6 +1425,10 @@ function updateHud(info) {
   elSpeed.textContent = myBoat.speedKnots.toFixed(1) + " kt" + (info.drifting && myBoat.speedKnots < -0.05 ? " (sternway)" : "");
   elSpeed.classList.toggle("warn", info.drifting);
   elHeading.textContent = Math.round(trueDeg(myBoat.headingDeg)) + bearingSuffix();
+  const ground = groundMotionFor(myBoat.headingDeg, myBoat.speedKnots, waterCurrent);
+  elSog.textContent = ground.speedOverGroundKnots.toFixed(1) + " kt";
+  elCog.textContent = ground.courseOverGroundDeg == null
+    ? "—" : Math.round(trueDeg(ground.courseOverGroundDeg)) + bearingSuffix();
   const setupEffect = info.setupEffect || myBoat.setupEffect;
   elSetup.textContent = myBoat.setup.sailChoice + " · " + Math.round(setupEffect.speedMultiplier * 100) + "% · rig " + Math.round(setupEffect.rigMatch01 * 100) + "%";
   const sea = info.seaState || mySeaState;

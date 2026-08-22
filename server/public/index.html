@@ -393,6 +393,7 @@
         <select id="aiOpponentCount" aria-label="Number of AI opponents"><option value="0">No AI opponents</option><option value="1">1 AI opponent</option><option value="2">2 AI opponents</option><option value="3">3 AI opponents</option><option value="4">4 AI opponents</option><option value="5">5 AI opponents</option></select>
         <button class="ghost" id="aiFleetApplyBtn" type="button">SET AI FLEET</button>
       </div>
+      <p class="weather-meta" id="aiFleetStatus">Host can add AI opponents before the start.</p>
       <p class="weather-meta">AI boats use the same Finn polar, setup, dirty wind, rules, and tidal current as human sailors.</p>
     </div>
     <div class="lobby-field">
@@ -449,8 +450,10 @@
       <div class="card readouts" id="readouts">
         <span class="lbl">wind</span><span class="val" id="rWind">&mdash;</span>
         <span class="lbl">twa</span><span class="val" id="rTwa">&mdash;</span>
-        <span class="lbl">speed</span><span class="val" id="rSpeed">&mdash;</span>
+        <span class="lbl">boat speed</span><span class="val" id="rSpeed">&mdash;</span>
         <span class="lbl">heading</span><span class="val" id="rHeading">&mdash;</span>
+        <span class="lbl">SOG</span><span class="val" id="rSog">&mdash;</span>
+        <span class="lbl">COG</span><span class="val" id="rCog">&mdash;</span>
         <span class="lbl">setup</span><span class="val" id="rSetup">&mdash;</span>
         <span class="lbl">sea</span><span class="val" id="rSea">&mdash;</span>
         <div class="tack-badge" id="tackBadge">&mdash;</div>

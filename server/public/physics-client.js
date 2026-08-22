@@ -134,6 +134,22 @@ export function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
 export function bearingTo(fromX, fromY, toX, toY) {
   return wrap360(Math.atan2(toX - fromX, -(toY - fromY)) / D2R);
 }
+export function groundMotionFor(headingDeg, speedKnots, waterCurrent = null) {
+  const headingRad = wrap360(headingDeg) * D2R;
+  let eastKnots = Math.sin(headingRad) * speedKnots;
+  let northKnots = Math.cos(headingRad) * speedKnots;
+  const currentSpeed = Math.max(0, Number(waterCurrent?.speedKnots) || 0);
+  if (currentSpeed > 0) {
+    const currentRad = wrap360(Number(waterCurrent?.directionDeg) || 0) * D2R;
+    eastKnots += Math.sin(currentRad) * currentSpeed;
+    northKnots += Math.cos(currentRad) * currentSpeed;
+  }
+  const speedOverGroundKnots = Math.hypot(eastKnots, northKnots);
+  return {
+    speedOverGroundKnots,
+    courseOverGroundDeg: speedOverGroundKnots > 0.01 ? wrap360(Math.atan2(eastKnots, northKnots) / D2R) : null
+  };
+}
 export function leewardGateForStartLine(startLine, gateConfig = {}) {
   const lineCentreX = (startLine.pinX + startLine.boatEndX) / 2;
   const centreX = lineCentreX + (Number.isFinite(gateConfig.centerX) ? gateConfig.centerX : 0);

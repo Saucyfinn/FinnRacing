@@ -197,8 +197,13 @@ export class RaceRoom {
       return;
     }
     if (msg.t === "ai_fleet") {
-      if (this.roomStatus !== "lobby" || session.id !== this.hostId) return;
-      this.setAiCount(clamp(Math.round(Number(msg.count) || 0), 0, MAX_BOATS - 1));
+      if (this.roomStatus !== "lobby" || session.id !== this.hostId) {
+        ws.send(JSON.stringify({ t: "ai_fleet_result", count: this.aiSeats.size, limited: true }));
+        return;
+      }
+      const requestedCount = clamp(Math.round(Number(msg.count) || 0), 0, MAX_BOATS - 1);
+      this.setAiCount(requestedCount);
+      ws.send(JSON.stringify({ t: "ai_fleet_result", count: this.aiSeats.size, limited: this.aiSeats.size < requestedCount }));
       return;
     }
     if (msg.t === "restart") {

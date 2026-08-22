@@ -7,6 +7,7 @@ import {
   FINN_BOOM_OUTER_POINT_M,
   FINN_LENGTH_M,
   FINN_BEAM_M,
+  groundMotionFor,
   freshBoatState,
   freshRaceState,
   polarSpeed,
@@ -21,6 +22,7 @@ import {
   FINN_BOOM_OUTER_POINT_M as CLIENT_FINN_BOOM_OUTER_POINT_M,
   FINN_LENGTH_M as CLIENT_FINN_LENGTH_M,
   FINN_BEAM_M as CLIENT_FINN_BEAM_M,
+  groundMotionFor as clientGroundMotionFor,
   idealTrimAngle as clientIdealTrimAngle,
   tackSignForTwa as clientTackSignForTwa,
   leewardGateForStartLine as clientLeewardGateForStartLine,
@@ -139,6 +141,17 @@ test("tidal current changes ground track without changing speed through water", 
   assert.equal(tide.speedKnots, stillWater.speedKnots);
   assert.ok(Math.abs((tide.worldX - stillWater.worldX) - 2 * 0.5144) < 1e-9);
   assert.ok(Math.abs(tide.worldY - stillWater.worldY) < 1e-9);
+});
+
+test("speed and course over ground combine boat motion with tidal current", () => {
+  const ground = groundMotionFor(0, 5, { speedKnots: 2, directionDeg: 90 });
+  assert.ok(Math.abs(ground.speedOverGroundKnots - Math.hypot(5, 2)) < 0.000001);
+  assert.ok(Math.abs(ground.courseOverGroundDeg - 21.801409486) < 0.000001);
+  assert.deepEqual(clientGroundMotionFor(0, 5, { speedKnots: 2, directionDeg: 90 }), ground);
+
+  const stopped = groundMotionFor(0, 0, { speedKnots: 0, directionDeg: 0 });
+  assert.equal(stopped.speedOverGroundKnots, 0);
+  assert.equal(stopped.courseOverGroundDeg, null);
 });
 
 test("wind against tide creates more chop than a following tide", () => {
