@@ -4,7 +4,7 @@ import {
   windAt, freshBoatState, stepBoatKinematics, stepFleetDirtyWind, effectiveWindForBoat,
   normalizeBoatSetup,
   freshRaceState, stepRace, stepRules, applyPenaltyOverride, updatePenaltyProgress,
-  spawnPositions, startLineForBoatCount, PRESTART_SECONDS, RACE_TIMEOUT_SECONDS
+  spawnPositions, startLineForBoatCount, leewardGateForStartLine, PRESTART_SECONDS, RACE_TIMEOUT_SECONDS
 } from "./physics.js";
 import { DEFAULT_VENUE, isDefaultVenue, isLegacyDefaultVenue } from "./venue.js";
 
@@ -166,10 +166,11 @@ export class RaceRoom {
       const currentSpeed = Number(msg.currentSpeedKnots), currentDir = Number(msg.currentDirectionDeg);
       if (![windSpeed, windDir, currentSpeed, currentDir].every(Number.isFinite)) return;
       this.wind.baseSpeed = clamp(windSpeed, 2, 30);
-      // Rotate true wind/current into the map-defined local course frame. The
-      // host may deliberately set a course that is not perfectly square.
+      // The course is wind-aligned: local -Y points into the true wind and the
+      // horizontal start/finish line is therefore perpendicular to it.
+      if (this.venue) this.venue.bearingDeg = wrap360(windDir);
       const courseBearing = this.venue ? this.venue.bearingDeg : windDir;
-      this.wind.baseDir = wrap360(windDir - courseBearing);
+      this.wind.baseDir = 0;
       this.wind.t = 0;
       this.waterCurrent = {
         speedKnots: clamp(currentSpeed, 0, 6), directionDeg: wrap360(currentDir - courseBearing), trueDirectionDeg: wrap360(currentDir),
@@ -228,15 +229,13 @@ export class RaceRoom {
       const trueWindDirection = wrap360(this.wind.baseDir + previousBearing);
       const trueCurrentDirection = Number.isFinite(this.waterCurrent.trueDirectionDeg)
         ? this.waterCurrent.trueDirectionDeg : wrap360(this.waterCurrent.directionDeg + previousBearing);
-      const brg = Number(msg.bearingDeg);
       this.venue = {
         lat, lon,
-        bearingDeg: Number.isFinite(brg) ? ((brg % 360) + 360) % 360
-          : (this.venue ? this.venue.bearingDeg : Math.floor(Math.random() * 360))
+        bearingDeg: trueWindDirection
       };
       const courseLengthM = clamp(Number(msg.courseLengthM) || Math.abs(this.windwardMark.y), 50, 5000);
       this.windwardMark = { x: 0, y: -courseLengthM };
-      this.wind.baseDir = wrap360(trueWindDirection - this.venue.bearingDeg);
+      this.wind.baseDir = 0;
       this.waterCurrent.directionDeg = wrap360(trueCurrentDirection - this.venue.bearingDeg);
       this.waterCurrent.trueDirectionDeg = trueCurrentDirection;
       this.broadcastRoster();
@@ -264,6 +263,7 @@ export class RaceRoom {
   }
 
   beginRace() {
+    this.alignCourseToStartWind();
     const seats = [];
     for (let i = 0; i < MAX_BOATS; i++) if (this.connected[i]) seats.push(i);
     this.startLine = startLineForBoatCount(seats.length);
@@ -283,6 +283,23 @@ export class RaceRoom {
     this.roomStatus = "prestart";
     this.broadcast({ t: "start_countdown", prestartSeconds: this.prestartSeconds });
     this.broadcastRoster();
+  }
+
+  alignCourseToStartWind() {
+    if (!this.venue) return;
+    const localWindAtStart = this.currentWind().dir;
+    const previousBearing = this.venue.bearingDeg;
+    const trueWindAtStart = wrap360(previousBearing + localWindAtStart);
+    const trueCurrentDirection = Number.isFinite(this.waterCurrent.trueDirectionDeg)
+      ? this.waterCurrent.trueDirectionDeg
+      : wrap360(previousBearing + this.waterCurrent.directionDeg);
+
+    this.venue.bearingDeg = trueWindAtStart;
+    // Keep the same modeled oscillation phase but make its instantaneous value
+    // zero in the newly wind-aligned local frame.
+    this.wind.baseDir = wrap360(this.wind.baseDir - localWindAtStart);
+    this.waterCurrent.directionDeg = wrap360(trueCurrentDirection - trueWindAtStart);
+    this.waterCurrent.trueDirectionDeg = trueCurrentDirection;
   }
 
   assignSeat(session) {
@@ -375,8 +392,9 @@ export class RaceRoom {
       // than continuing past it on the original boundary rule.
       if (markDistance < 35) boat.aiTackHeading = boat.worldX > 0 ? port : starboard;
       this.setAiHeadingWithAvoidance(seat, boat.aiTackHeading);
-    } else if (race.leg === 2) {
-      this.steerAiTo(seat, (this.startLine.pinX + this.startLine.boatEndX) / 2, this.startLine.y + 105, false);
+    } else if (race.leg === 2 || race.leg === 4) {
+      const gate = leewardGateForStartLine(this.startLine);
+      this.steerAiTo(seat, (gate.portX + gate.starboardX) / 2, gate.y + 10, false);
     } else {
       const finishX = (this.startLine.pinX + this.startLine.boatEndX) / 2;
       this.steerAiTo(seat, finishX, this.startLine.y + 10, false);

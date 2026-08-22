@@ -111,7 +111,7 @@ export function boatSetupPerformance(setupValue, twsKnots) {
 
 export const PIN_X = -10, BOAT_END_X = 10, START_Y = 0;
 export const WINDWARD_MARK = { x: 0, y: -1852 };
-export const LEEWARD_GATE_OFFSET_M = 100;
+export const LEEWARD_GATE_OFFSET_M = -5;
 export const LEEWARD_GATE_WIDTH_M = 20;
 export const PRESTART_SECONDS = 180;
 
@@ -125,7 +125,7 @@ export function leewardGateForStartLine(startLine) {
 }
 export function currentMarkFor(leg, windwardMark = WINDWARD_MARK, startLine = { pinX: PIN_X, boatEndX: BOAT_END_X, y: START_Y }) {
   if (leg === 1 || leg === 3) return windwardMark;
-  if (leg === 2) {
+  if (leg === 2 || leg === 4) {
     const gate = leewardGateForStartLine(startLine);
     return { x: (gate.portX + gate.starboardX) / 2, y: gate.y };
   }

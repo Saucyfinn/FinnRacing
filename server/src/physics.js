@@ -164,7 +164,8 @@ export const MIN_START_LINE_LENGTH_M = 20;
 export const PIN_X = -10, BOAT_END_X = 10, START_Y = 0;
 export const NAUTICAL_MILE_M = 1852;
 export const WINDWARD_MARK = { x: 0, y: -NAUTICAL_MILE_M };
-export const LEEWARD_GATE_OFFSET_M = 100;
+// The gate sits just inside (windward of) the start/finish line.
+export const LEEWARD_GATE_OFFSET_M = -5;
 export const LEEWARD_GATE_WIDTH_M = 20;
 export const MARK_RADIUS = 8;
 export const PRESTART_SECONDS = 180;
@@ -415,7 +416,7 @@ export function freshRaceState() {
 
 export function currentMarkFor(rs, windwardMark = WINDWARD_MARK, startLine = { pinX: PIN_X, boatEndX: BOAT_END_X, y: START_Y }) {
   if (rs.leg === 1 || rs.leg === 3) return windwardMark;
-  if (rs.leg === 2) {
+  if (rs.leg === 2 || rs.leg === 4) {
     const gate = leewardGateForStartLine(startLine);
     return { x: (gate.portX + gate.starboardX) / 2, y: gate.y };
   }
@@ -443,7 +444,9 @@ export function stepRace(s, rs, raceClock, dt, startLine = { pinX: PIN_X, boatEn
       rs.leg = 3;
     } else if (rs.leg === 3) {
       if (dist(s.worldX, s.worldY, windwardMark.x, windwardMark.y) < MARK_RADIUS) rs.leg = 4;
-    } else if (rs.leg === 4 && crossing === "north-to-south") {
+    } else if (rs.leg === 4 && gateCrossing === "north-to-south") {
+      rs.leg = 5;
+    } else if (rs.leg === 5 && crossing === "north-to-south") {
       rs.status = "finished";
       rs.finishTime = raceClock - prestartSeconds;
     }

@@ -7,8 +7,27 @@ import {
   freshRaceState,
   polarSpeed,
   stepBoatKinematics,
-  stepRace
+  stepRace,
+  startLineForBoatCount,
+  leewardGateForStartLine
 } from "../src/physics.js";
+import {
+  leewardGateForStartLine as clientLeewardGateForStartLine,
+  currentMarkFor as clientCurrentMarkFor
+} from "../public/physics-client.js";
+
+test("default line and course geometry match the sailing instructions", () => {
+  assert.equal(startLineForBoatCount(0).lengthM, 20);
+  assert.equal(startLineForBoatCount(2).lengthM, 20);
+  assert.equal(startLineForBoatCount(4).lengthM, 27);
+  assert.equal(startLineForBoatCount(6).lengthM, 40.5);
+  const fourBoatLine = startLineForBoatCount(4);
+  const gate = leewardGateForStartLine(fourBoatLine);
+  assert.equal(gate.y, -5);
+  assert.deepEqual(clientLeewardGateForStartLine(fourBoatLine), gate);
+  assert.deepEqual(clientCurrentMarkFor(4, { x: 0, y: -1852 }, fourBoatLine), { x: 0, y: -5 });
+  assert.deepEqual(clientCurrentMarkFor(5, { x: 0, y: -1852 }, fourBoatLine), { x: 0, y: 0 });
+});
 
 test("Finn polar is capped at 5.4 knots at 40 degrees", () => {
   for (const windSpeed of [5, 8, 10, 12, 15, 18, 20, 25, 30]) {
@@ -58,7 +77,7 @@ test("custom start sequence controls when a line crossing starts the race", () =
 test("downwind return crossing completes the race", () => {
   const boat = freshBoatState(180);
   const race = freshRaceState();
-  race.status = "racing"; race.leg = 4;
+  race.status = "racing"; race.leg = 5;
   race.prevWorldX = 0; race.prevWorldY = -1;
   boat.worldX = 0; boat.worldY = 1;
   stepRace(boat, race, 200, 0, undefined, 60, { x: 0, y: -250 });
@@ -66,7 +85,7 @@ test("downwind return crossing completes the race", () => {
   assert.equal(race.finishTime, 140);
 });
 
-test("default course requires gate and two windward legs before the downwind finish", () => {
+test("default course completes two windward leewards before finishing at the line", () => {
   const boat = freshBoatState(180);
   const race = freshRaceState();
   race.status = "racing";
@@ -76,14 +95,18 @@ test("default course requires gate and two windward legs before the downwind fin
   stepRace(boat, race, 100, 0, undefined, 60, mark);
   assert.equal(race.leg, 2);
 
-  race.prevWorldX = 0; race.prevWorldY = 99;
-  boat.worldY = 101;
+  race.prevWorldX = 0; race.prevWorldY = -6;
+  boat.worldY = -4;
   stepRace(boat, race, 900, 0, undefined, 60, mark);
   assert.equal(race.leg, 3);
 
   boat.worldY = mark.y;
   stepRace(boat, race, 1800, 0, undefined, 60, mark);
   assert.equal(race.leg, 4);
+
+  race.prevWorldY = -6; boat.worldY = -4;
+  stepRace(boat, race, 2500, 0, undefined, 60, mark);
+  assert.equal(race.leg, 5);
 
   race.prevWorldY = -1; boat.worldY = 1;
   stepRace(boat, race, 2600, 0, undefined, 60, mark);

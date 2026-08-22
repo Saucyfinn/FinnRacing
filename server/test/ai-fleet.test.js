@@ -22,6 +22,23 @@ test("host-configured AI opponents occupy real fleet seats", () => {
   assert.equal(raceRoom.connected.filter(Boolean).length, 1);
 });
 
+test("the course axis aligns to the wind when the start sequence begins", () => {
+  const raceRoom = room();
+  raceRoom.venue = { lat: -43.6198028, lon: 172.7193694, bearingDeg: 75 };
+  raceRoom.wind = { baseDir: 28, baseSpeed: 12, t: 12 };
+  raceRoom.waterCurrent = { speedKnots: 1, directionDeg: 40, trueDirectionDeg: 115 };
+  const expectedTrueWind = (75 + raceRoom.currentWind().dir) % 360;
+
+  raceRoom.beginRace();
+
+  assert.ok(Math.abs(raceRoom.venue.bearingDeg - expectedTrueWind) < 0.000001);
+  assert.ok(Math.abs(raceRoom.currentWind().dir) < 0.000001);
+  assert.equal(raceRoom.startLine.y, 0);
+  assert.equal(raceRoom.windwardMark.x, 0);
+  assert.equal(raceRoom.windwardMark.y, -1852);
+  assert.equal(raceRoom.waterCurrent.trueDirectionDeg, 115);
+});
+
 test("AI starts on the signal and chooses an upwind tack", () => {
   const raceRoom = room();
   raceRoom.setAiCount(1);

@@ -635,12 +635,13 @@ function renderRoster(roster, hostId) {
   updateRaceLayout();
 }
 
+let raceLayoutActive = null;
 function updateRaceLayout() {
   const active = roomStatus !== "lobby" && !isWaiting;
+  if (active === raceLayoutActive) return;
+  raceLayoutActive = active;
   document.body.classList.toggle("race-active", active);
-  requestAnimationFrame(() => {
-    resizeWorld();
-  });
+  requestAnimationFrame(resizeWorld);
 }
 
 function onSnapshot(msg) {
@@ -1069,10 +1070,14 @@ function drawWorld(info, dt) {
   [[pinSx, pinSy], [endSx, endSy]].forEach(([sx, sy]) => {
     wctx.fillStyle = "#f0c581"; wctx.beginPath(); wctx.arc(sx, sy, 4, 0, TAU); wctx.fill();
   });
+  wctx.fillStyle = "#f0c581"; wctx.font = "10px 'IBM Plex Mono', monospace"; wctx.textAlign = "center";
+  wctx.fillText("START / FINISH", (pinSx + endSx) / 2, pinSy + 16);
   const [mSx, mSy] = toScreen(windwardMark.x, windwardMark.y);
   wctx.fillStyle = "#dba85a"; wctx.beginPath(); wctx.arc(mSx, mSy, 5, 0, TAU); wctx.fill();
   wctx.strokeStyle = "rgba(219,168,90,0.4)"; wctx.lineWidth = 1;
   wctx.beginPath(); wctx.arc(mSx, mSy, 8 * viewScale, 0, TAU); wctx.stroke();
+  wctx.fillStyle = "#dba85a"; wctx.font = "10px 'IBM Plex Mono', monospace"; wctx.textAlign = "center";
+  wctx.fillText("WINDWARD · ROUND TWICE", mSx, mSy - 12);
   const gate = leewardGateForStartLine(startLine);
   const [gatePortSx, gatePortSy] = toScreen(gate.portX, gate.y);
   const [gateStarboardSx, gateStarboardSy] = toScreen(gate.starboardX, gate.y);
@@ -1082,6 +1087,8 @@ function drawWorld(info, dt) {
   [[gatePortSx, gatePortSy], [gateStarboardSx, gateStarboardSy]].forEach(([sx, sy]) => {
     wctx.fillStyle = "#4fc3f7"; wctx.beginPath(); wctx.arc(sx, sy, 5, 0, TAU); wctx.fill();
   });
+  wctx.fillStyle = "#4fc3f7"; wctx.font = "10px 'IBM Plex Mono', monospace"; wctx.textAlign = "center";
+  wctx.fillText("LEEWARD GATE · PASS TWICE", (gatePortSx + gateStarboardSx) / 2, gatePortSy - 10);
 
   // other boats
   for (const key in remoteBuffers) {
@@ -1231,7 +1238,7 @@ function updateRaceHud() {
     updateMarkPointer({ x: (startLine.pinX + startLine.boatEndX) / 2, y: startLine.y });
   } else {
     elRaceClock.textContent = "RACE · " + fmtClock(raceClock - prestartSeconds);
-    const legLabels = { 1: "→ windward mark · lap 1/2", 2: "→ leeward gate · lap 1/2", 3: "→ windward mark · lap 2/2", 4: "→ downwind finish" };
+    const legLabels = { 1: "→ windward mark · lap 1/2", 2: "→ leeward gate · lap 1/2", 3: "→ windward mark · lap 2/2", 4: "→ leeward gate · lap 2/2", 5: "→ start / finish line" };
     elRaceLeg.textContent = legLabels[myRace.leg] || "→ next mark";
     updateMarkPointer(currentMarkFor(myRace.leg, windwardMark, startLine));
   }
