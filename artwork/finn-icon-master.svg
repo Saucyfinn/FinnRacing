@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Finn dinghy game icon</title>
+  <desc id="desc">Top-down Finn dinghy drawn to the 2025 class-rule longitudinal proportions.</desc>
+  <defs>
+    <linearGradient id="hull" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8bdcff"/>
+      <stop offset="0.5" stop-color="#4fc3f7"/>
+      <stop offset="1" stop-color="#169bd5"/>
+    </linearGradient>
+    <linearGradient id="deck" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fffef8"/>
+      <stop offset="1" stop-color="#e7eceb"/>
+    </linearGradient>
+    <linearGradient id="sail" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.98"/>
+      <stop offset="1" stop-color="#dce7e7" stop-opacity="0.94"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#020b10" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+
+  <!-- Shift the hull starboard so the class-length boom fits inside the square icon. -->
+  <g transform="translate(55 0)">
+  <!-- Hull: 452 units represent 4495 mm; maximum beam is 152 units (about 1510 mm). -->
+  <path d="M290 30
+           C273 42 251 68 237 104
+           C222 142 214 188 214 244
+           C214 313 224 378 240 430
+           L252 482 L328 482
+           L340 430 C356 378 366 313 366 244
+           C366 188 358 142 343 104
+           C329 68 307 42 290 30 Z"
+        fill="url(#hull)" stroke="#dff7ff" stroke-width="3"/>
+
+  <!-- Deck inset follows the same station-derived hull silhouette. -->
+  <path d="M290 43
+           C276 54 258 78 246 111
+           C233 148 226 191 226 244
+           C226 309 235 371 250 423
+           L260 469 L320 469
+           L330 423 C345 371 354 309 354 244
+           C354 191 347 148 334 111
+           C322 78 304 54 290 43 Z"
+        fill="url(#deck)" stroke="#dba85a" stroke-opacity="0.55" stroke-width="1.5"/>
+
+  <!-- Class-rule longitudinal layout: foredeck 1400/4495, cockpit 2495/4495, aft deck 600/4495. -->
+  <path d="M248 171
+           Q290 157 332 171
+           C340 231 340 350 326 422
+           Q290 433 254 422
+           C240 350 240 231 248 171 Z"
+        fill="#08151b" stroke="#e2ece9" stroke-width="4"/>
+  <path d="M259 193 C250 250 251 350 261 400" fill="none" stroke="#213540" stroke-width="6" opacity="0.8"/>
+  <path d="M321 193 C330 250 329 350 319 400" fill="none" stroke="#213540" stroke-width="6" opacity="0.8"/>
+
+  <!-- Hiking pads. -->
+  <g fill="#132733" stroke="#56707a" stroke-width="1.5">
+    <path d="M239 234 L262 241 L260 314 L235 305 Z"/>
+    <path d="M341 234 L318 241 L320 314 L345 305 Z"/>
+  </g>
+  <g stroke="#dce6e5" stroke-width="3" stroke-linecap="round">
+    <path d="M244 251 L257 255 M243 263 L257 267 M241 275 L257 279 M240 287 L257 291"/>
+    <path d="M336 251 L323 255 M337 263 L323 267 M339 275 L323 279 M340 287 L323 291"/>
+  </g>
+
+  <!-- Mast pivot: 700 mm aft of bow, exactly halfway along the 1400 mm foredeck. -->
+  <circle cx="290" cy="100.4" r="10" fill="#08151b" stroke="#dba85a" stroke-width="2"/>
+  <circle cx="290" cy="100.4" r="4" fill="#51636c"/>
+
+  <!-- Top-down Finn mainsail. Boom is 325 units: 3230/4495 of the 452-unit hull. -->
+  <g filter="url(#soft)">
+    <path d="M286 96 L-30 40
+             Q-12 112 24 190
+             Q155 144 286 104 Z"
+          fill="url(#sail)" stroke="#f7fbfa" stroke-width="2"/>
+    <path d="M290 100.4 L-30 40" stroke="#101b22" stroke-width="10" stroke-linecap="round"/>
+    <path d="M290 100.4 Q155 144 24 190" fill="none" stroke="#dba85a" stroke-width="2"/>
+    <path d="M-30 40 Q-12 112 24 190" fill="none" stroke="#b9c8c8" stroke-width="1.5"/>
+  </g>
+
+  <!-- Tiller and rudder on centreline. -->
+  <path d="M290 385 L290 473" stroke="#111d24" stroke-width="6" stroke-linecap="round"/>
+  <rect x="283" y="462" width="14" height="31" rx="5" fill="#08151b" stroke="#60727a" stroke-width="1.5"/>
+  <path d="M290 493 L290 504" stroke="#dba85a" stroke-width="3" stroke-linecap="round"/>
+  </g>
+</svg>
