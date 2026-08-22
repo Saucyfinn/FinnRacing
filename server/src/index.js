@@ -1,5 +1,5 @@
 export { RaceRoom } from "./raceRoom.js";
-import { DEFAULT_VENUE } from "./venue.js";
+import { DEFAULT_VENUE, isLegacyDefaultVenue } from "./venue.js";
 
 const ROOM_ID_RE = /^[a-zA-Z0-9_-]{3,32}$/;
 const TILE_RE = /^\/tiles\/(\d{1,2})\/(\d{1,7})\/(\d{1,7})\.(png|webp|jpeg)$/;
@@ -135,7 +135,11 @@ export default {
       // Existing Durable Object rooms created before map support may still
       // hold a null venue. Supplying the default on reconnect upgrades them,
       // while rooms that already chose a venue ignore these parameters.
-      if (!forward.searchParams.has("lat") || !forward.searchParams.has("lon")) {
+      const forwardedVenue = {
+        lat: forward.searchParams.get("lat"),
+        lon: forward.searchParams.get("lon")
+      };
+      if (!forward.searchParams.has("lat") || !forward.searchParams.has("lon") || isLegacyDefaultVenue(forwardedVenue)) {
         forward.searchParams.set("lat", String(DEFAULT_VENUE.lat));
         forward.searchParams.set("lon", String(DEFAULT_VENUE.lon));
         forward.searchParams.set("brg", String(DEFAULT_VENUE.bearingDeg));

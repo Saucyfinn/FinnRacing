@@ -6,7 +6,7 @@ import {
   freshRaceState, stepRace, stepRules, applyPenaltyOverride, updatePenaltyProgress,
   spawnPositions, startLineForBoatCount, PRESTART_SECONDS, RACE_TIMEOUT_SECONDS
 } from "./physics.js";
-import { DEFAULT_VENUE } from "./venue.js";
+import { DEFAULT_VENUE, isDefaultVenue, isLegacyDefaultVenue } from "./venue.js";
 
 const BOAT_COLORS = ["#e2ece9", "#6fa9d9", "#f0c581", "#c98bd8", "#7fd1a8", "#e2726f"];
 const RESTART_DELAY_SEC = 6;
@@ -81,7 +81,6 @@ export class RaceRoom {
   currentWind() { return windAt(this.wind.baseDir, this.wind.baseSpeed, this.wind.t); }
 
   adoptVenue(params) {
-    if (this.venueChosenFromLink) return;
     // Careful: Number(null) is 0 and Number("") is 0, so a missing parameter
     // would otherwise read as a perfectly valid course at 0°N 0°E.
     const latRaw = params.get("lat"), lonRaw = params.get("lon");
@@ -89,6 +88,11 @@ export class RaceRoom {
     const lat = Number(latRaw), lon = Number(lonRaw);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
     if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return;
+
+    // Upgrade rooms that received one of the application's obsolete defaults.
+    // A genuinely custom venue remains fixed for the lifetime of the room.
+    if (this.venueChosenFromLink
+      && !(isLegacyDefaultVenue(this.venue) && isDefaultVenue({ lat, lon }))) return;
 
     const brgRaw = params.get("brg");
     const brg = brgRaw === null || brgRaw === "" ? NaN : Number(brgRaw);

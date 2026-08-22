@@ -26,6 +26,39 @@ test("new room connections default to Lyttelton Harbour", async () => {
   assert.equal(forwardedUrl.searchParams.get("brg"), "75");
 });
 
+test("obsolete default links are upgraded but custom venues are preserved", async () => {
+  const forwarded = [];
+  const env = {
+    RACE_ROOM: {
+      idFromName: roomId => roomId,
+      get: () => ({
+        fetch(request) {
+          forwarded.push(new URL(request.url));
+          return new Response("ok");
+        }
+      })
+    }
+  };
+
+  await worker.fetch(new Request("https://finnracing.test/ws/old?lat=-43.6105&lon=172.724&brg=75"), env);
+  await worker.fetch(new Request("https://finnracing.test/ws/custom?lat=-36.84&lon=174.76&brg=20"), env);
+
+  assert.equal(forwarded[0].searchParams.get("lat"), "-43.6198028");
+  assert.equal(forwarded[0].searchParams.get("lon"), "172.7193694");
+  assert.equal(forwarded[1].searchParams.get("lat"), "-36.84");
+  assert.equal(forwarded[1].searchParams.get("lon"), "174.76");
+});
+
+test("an active room using an obsolete default adopts the precise default", () => {
+  const room = new RaceRoom({}, {});
+  room.venue = { lat: -43.6105, lon: 172.724, bearingDeg: 75 };
+  room.venueChosenFromLink = true;
+
+  room.adoptVenue(new URLSearchParams({ lat: "-43.6198028", lon: "172.7193694", brg: "75" }));
+
+  assert.deepEqual(room.venue, { lat: -43.6198028, lon: 172.7193694, bearingDeg: 75 });
+});
+
 test("forecast interpolation follows the shortest path across north", () => {
   const hourly = {
     time: ["2026-08-22T00:00", "2026-08-22T01:00"],
