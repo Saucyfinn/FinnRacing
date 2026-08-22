@@ -72,7 +72,8 @@
   .doc-title { font-weight: 700; color: var(--accent); font-size: 15px; letter-spacing: -0.01em; margin: 0 0 2px; }
   .doc-sub { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; color: var(--muted); letter-spacing: 0.03em; }
 
-  .readouts { display: grid; grid-template-columns: 1fr auto; gap: 5px 18px; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12.5px; }
+  .readouts { display:flex; flex-direction:column; gap:5px; font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12.5px; }
+  .readout-row { display:grid; grid-template-columns:1fr auto; gap:18px; }
   .readouts .lbl { color: var(--muted); }
   .readouts .val { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; font-weight: 500; }
   .readouts .val.warn { color: var(--danger); }
@@ -273,9 +274,12 @@
       background:rgba(8,18,32,.70); border-color:rgba(26,58,85,.65);
       font-size:10px;
     }
-    body.race-active .readouts > :nth-child(-n+4),
-    body.race-active .readouts > :nth-child(9),
-    body.race-active .readouts > :nth-child(10) { display:none; }
+    body.race-active .readout-row { display:none; }
+    body.race-active .readout-row[data-readout="boat-speed"],
+    body.race-active .readout-row[data-readout="heading"],
+    body.race-active .readout-row[data-readout="sog"],
+    body.race-active .readout-row[data-readout="cog"],
+    body.race-active .readout-row[data-readout="sea"] { display:grid; }
     body.race-active .tack-badge { grid-column:1/-1; margin-top:3px; padding:2px 6px; font-size:9px; }
     body.race-active .controls {
       z-index:12; left:8px; right:8px;
@@ -448,14 +452,14 @@
         <p class="doc-sub" id="roomLabel">room &mdash;</p>
       </div>
       <div class="card readouts" id="readouts">
-        <span class="lbl">wind</span><span class="val" id="rWind">&mdash;</span>
-        <span class="lbl">twa</span><span class="val" id="rTwa">&mdash;</span>
-        <span class="lbl">boat speed</span><span class="val" id="rSpeed">&mdash;</span>
-        <span class="lbl">heading</span><span class="val" id="rHeading">&mdash;</span>
-        <span class="lbl">SOG</span><span class="val" id="rSog">&mdash;</span>
-        <span class="lbl">COG</span><span class="val" id="rCog">&mdash;</span>
-        <span class="lbl">setup</span><span class="val" id="rSetup">&mdash;</span>
-        <span class="lbl">sea</span><span class="val" id="rSea">&mdash;</span>
+        <div class="readout-row" data-readout="wind"><span class="lbl">wind</span><span class="val" id="rWind">&mdash;</span></div>
+        <div class="readout-row" data-readout="twa"><span class="lbl">TWA</span><span class="val" id="rTwa">&mdash;</span></div>
+        <div class="readout-row" data-readout="boat-speed"><span class="lbl">boat speed</span><span class="val" id="rSpeed">&mdash;</span></div>
+        <div class="readout-row" data-readout="heading"><span class="lbl">heading</span><span class="val" id="rHeading">&mdash;</span></div>
+        <div class="readout-row" data-readout="sog"><span class="lbl">SOG</span><span class="val" id="rSog">&mdash;</span></div>
+        <div class="readout-row" data-readout="cog"><span class="lbl">COG</span><span class="val" id="rCog">&mdash;</span></div>
+        <div class="readout-row" data-readout="setup"><span class="lbl">setup</span><span class="val" id="rSetup">&mdash;</span></div>
+        <div class="readout-row" data-readout="sea"><span class="lbl">sea</span><span class="val" id="rSea">&mdash;</span></div>
         <div class="tack-badge" id="tackBadge">&mdash;</div>
       </div>
     </div>
