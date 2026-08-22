@@ -67,14 +67,28 @@ test("a five-boat AI fleet holds separated lanes without entry penalties", () =>
   raceRoom.setAiCount(5);
   raceRoom.beginRace();
   const seats = [...raceRoom.aiSeats];
+  const starts = new Map(seats.map(seat => [seat, {
+    x: raceRoom.boats[seat].worldX,
+    y: raceRoom.boats[seat].worldY,
+  }]));
+  let maxDistanceFromSpawn = 0;
   for (let tick = 0; tick < 300; tick++) {
     raceRoom.raceClock = tick * 0.1;
     for (const seat of seats) raceRoom.steerAi(seat);
     const wind = raceRoom.currentWind();
-    for (const seat of seats) stepBoatKinematics(raceRoom.boats[seat], wind, 0.1, raceRoom.waterCurrent);
+    for (const seat of seats) {
+      const boat = raceRoom.boats[seat];
+      stepBoatKinematics(boat, wind, 0.1, raceRoom.waterCurrent);
+      const start = starts.get(seat);
+      maxDistanceFromSpawn = Math.max(
+        maxDistanceFromSpawn,
+        Math.hypot(boat.worldX - start.x, boat.worldY - start.y),
+      );
+    }
     stepRules(seats.map(seat => raceRoom.boats[seat]), seats.map(seat => raceRoom.races[seat]), wind, 0.1, seats);
   }
   assert.deepEqual(seats.map(seat => raceRoom.races[seat].penalty.count), [0, 0, 0, 0, 0]);
+  assert.ok(maxDistanceFromSpawn < 40, `AI fleet sailed ${maxDistanceFromSpawn.toFixed(1)}m from its staging area`);
 });
 
 test("the course axis aligns to the wind when the start sequence begins", () => {

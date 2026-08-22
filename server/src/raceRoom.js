@@ -12,7 +12,7 @@ import { loadLandCollisionMap } from "./landCollision.js";
 
 const BOAT_COLORS = ["#e2ece9", "#6fa9d9", "#f0c581", "#c98bd8", "#7fd1a8", "#e2726f"];
 const RESTART_DELAY_SEC = 6;
-const AI_ENTRY_SETTLE_SEC = 30;
+const AI_ENTRY_SETTLE_SEC = 8;
 // One RaceRoom Durable Object instance = one race room (fleet of up to
 // MAX_BOATS boats). The room is addressed by a short room code the client
 // picks, so no separate "create room" API call is needed — the Worker maps
@@ -298,6 +298,7 @@ export class RaceRoom {
       const spawn = spawns[k];
       const fresh = freshBoatState(spawn.headingDeg, this.setups[seat]);
       fresh.worldX = spawn.x; fresh.worldY = spawn.y;
+      if (this.aiSeats.has(seat)) { fresh.aiHoldX = spawn.x; fresh.aiHoldY = spawn.y; }
       this.boats[seat] = fresh;
       const rs = freshRaceState();
       rs.prevWorldX = spawn.x; rs.prevWorldY = spawn.y;
@@ -448,10 +449,11 @@ export class RaceRoom {
       } else {
         // Sail a compact racetrack behind the line instead of disappearing on
         // a fixed reach. The waypoint remains inside the visible start box.
-        // Assigned lanes do not cross. Alternating fore/aft rows preserve
-        // separation even when five AI boats share the start area.
-        const holdX = slotX;
-        const holdY = 12 + (fleetOrder % 2) * 10;
+        // Each AI orbits its own staging anchor in formation. All anchors use
+        // the same phase, so their relative spacing and paths never cross.
+        const holdPhase = Math.max(0, this.raceClock - AI_ENTRY_SETTLE_SEC) * 0.16;
+        const holdX = (Number.isFinite(boat.aiHoldX) ? boat.aiHoldX : slotX) + Math.sin(holdPhase) * 5;
+        const holdY = (Number.isFinite(boat.aiHoldY) ? boat.aiHoldY : 14) + (Math.cos(holdPhase) - 1) * 4;
         this.steerAiTo(seat, holdX, holdY, false);
       }
       return;
