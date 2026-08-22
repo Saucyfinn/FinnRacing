@@ -515,13 +515,24 @@ export class RaceRoom {
         }
 
         const pairKey = i + ":" + j;
-        if (ri.status === "racing" && rj.status === "racing" && ri.leg === rj.leg && (ri.leg === 1 || ri.leg === 3)) {
+        const atTopMark = ri.status === "racing" && rj.status === "racing"
+          && ri.leg === rj.leg && (ri.leg === 1 || ri.leg === 3);
+        if (atTopMark) {
           const di = Math.hypot(bi.worldX - this.windwardMark.x, bi.worldY - this.windwardMark.y);
           const dj = Math.hypot(bj.worldX - this.windwardMark.x, bj.worldY - this.windwardMark.y);
           if (!this.markRoomRights.has(pairKey) && Math.min(di, dj) <= markRoomZone) this.markRoomRights.set(pairKey, di <= dj ? i : j);
           const entitledSeat = this.markRoomRights.get(pairKey);
           if (entitledSeat != null && Math.min(di, dj) <= markRoomZone && separation < 16) {
             this.issueHail(entitledSeat, entitledSeat === i ? j : i, "ROOM", "room");
+          }
+
+          // At the windward mark, a starboard-tack boat calls "TOAST" when a
+          // port-tack boat comes within the three-Finn-length zone. Keep this
+          // after the normal hails so the requested call has visual priority.
+          if (bi.tackSign !== bj.tackSign && separation <= markRoomZone && Math.min(di, dj) <= markRoomZone) {
+            const starboardSeat = bi.tackSign > 0 ? i : j;
+            const portSeat = starboardSeat === i ? j : i;
+            this.issueHail(starboardSeat, portSeat, "TOAST", "toast");
           }
         } else this.markRoomRights.delete(pairKey);
       }
