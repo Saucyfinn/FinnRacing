@@ -35,7 +35,11 @@
     user-select: none;
   }
 
-  #world { position: fixed; top: 56px; left: 260px; right: 0; bottom: 0; display: block; }
+  #world {
+    position: fixed; top: 56px; left: 260px;
+    width: calc(100vw - 260px); height: calc(100vh - 56px);
+    display: block;
+  }
   .app-header { position:fixed; z-index:30; top:0; left:0; right:0; height:56px; background:#081220; border-bottom:1px solid var(--border); padding:0 20px; display:flex; align-items:center; justify-content:space-between; }
   .brand { display:flex; align-items:center; gap:10px; font-weight:800; letter-spacing:.01em; }
   .brand-mark { width:25px; height:31px; filter:drop-shadow(0 1px 3px rgba(0,0,0,.6)); }
@@ -194,7 +198,7 @@
   .attribution.show { display: block; }
 
   @media (max-width: 480px) {
-    #world { left:0; }
+    #world { left:0; width:100vw; height:calc(100vh - 56px); }
     .hud { left:0; width:100%; background:transparent; border:0; padding:10px; }
     .top-bar { flex-direction:row; }
     .controls { left:10px; right:10px; bottom:10px; }
