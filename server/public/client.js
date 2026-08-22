@@ -45,6 +45,7 @@ let authoritative = null;
 const myBoat = freshBoatState(0);
 let myRace = { status: "prestart", leg: 1, ocs: false, finishTime: null, place: null, penalty: { active: false, turnedDeg: 0, rule: null } };
 let wind = { dir: 0, speed: 10 };
+let myDirtyWind = { type: "clean", sourceBoatIndex: null, exposure01: 0, speedDeficitKnots: 0, directionShiftDeg: 0, effectiveSpeed: 10, effectiveDir: 0 };
 let roomStatus = "lobby";
 let raceClock = 0;
 let startLine = { pinX: PIN_X, boatEndX: BOAT_END_X, y: START_Y, lengthM: BOAT_END_X - PIN_X };
@@ -400,6 +401,7 @@ function onSnapshot(msg) {
         myInitialized = true;
       }
       authoritative = b;
+      if (b.dirtyWind) myDirtyWind = b.dirtyWind;
       myRace = b.race;
     } else {
       let buf = remoteBuffers[b.boatIndex];
@@ -407,7 +409,7 @@ function onSnapshot(msg) {
       buf.push({
         tRecv: now, worldX: b.worldX, worldY: b.worldY, headingDeg: b.headingDeg,
         speedKnots: b.speedKnots, tackSign: b.tackSign, name: b.name, color: b.color,
-        connected: b.connected, race: b.race
+        connected: b.connected, race: b.race, dirtyWind: b.dirtyWind
       });
       while (buf.length > 12) buf.shift();
     }
@@ -420,7 +422,10 @@ function stepLocalPrediction(dt) {
   if (myRace.penalty && myRace.penalty.active) {
     myBoat.targetHeadingDeg = wrap360(myBoat.headingDeg + 45); // mirrors the server's forced-turn override
   }
-  const info = stepBoatKinematics(myBoat, wind, dt);
+  const localWind = myDirtyWind.exposure01 > 0.01
+    ? { dir: myDirtyWind.effectiveDir, speed: myDirtyWind.effectiveSpeed }
+    : wind;
+  const info = stepBoatKinematics(myBoat, localWind, dt);
   if (authoritative) {
     const dx = authoritative.worldX - myBoat.worldX, dy = authoritative.worldY - myBoat.worldY;
     const d = Math.hypot(dx, dy);
@@ -452,7 +457,8 @@ function getRemoteRenderState(boatIndex) {
         worldX: lerp(a.worldX, b.worldX, t), worldY: lerp(a.worldY, b.worldY, t),
         headingDeg: a.headingDeg + wrap180(b.headingDeg - a.headingDeg) * t,
         speedKnots: lerp(a.speedKnots, b.speedKnots, t),
-        tackSign: b.tackSign, name: b.name, color: b.color, connected: b.connected, race: b.race
+        tackSign: b.tackSign, name: b.name, color: b.color, connected: b.connected, race: b.race,
+        dirtyWind: b.dirtyWind
       };
     }
   }
@@ -764,6 +770,11 @@ function drawWorld(info, dt) {
     if (sx < -60 || sx > w + 60 || sy < -60 || sy > h + 60) continue; // off-screen, skip label work
     maybePushWake(Number(key), r.worldX, r.worldY, r.speedKnots);
     drawBoatShape(sx, sy, r.headingDeg, r.color, 8, r.tackSign);
+    if (r.dirtyWind && r.dirtyWind.exposure01 >= 0.12) {
+      wctx.strokeStyle = r.dirtyWind.type === "leeBow" ? "rgba(226,114,111,0.8)" : "rgba(240,197,129,0.75)";
+      wctx.lineWidth = 2;
+      wctx.beginPath(); wctx.arc(sx, sy, 14 + r.dirtyWind.exposure01 * 8, 0, TAU); wctx.stroke();
+    }
     wctx.fillStyle = r.color; wctx.font = "10.5px 'IBM Plex Mono', monospace"; wctx.textAlign = "center";
     wctx.fillText(r.name + " · " + r.speedKnots.toFixed(1) + "kt", sx, sy - 28);
     if (r.race && r.race.penalty && r.race.penalty.active) {
@@ -776,6 +787,11 @@ function drawWorld(info, dt) {
   const hullColor = info.drifting ? "#e2726f" : (info.inNoGo ? "#f0c581" : myColor);
   const sailLean = myBoat.autoTrim ? 8 : (myBoat.trimAngleDeg / 90) * 22;
   drawBoatShape(cx, cy, myBoat.headingDeg, hullColor, sailLean, myBoat.tackSign);
+  if (myDirtyWind.exposure01 >= 0.12) {
+    wctx.strokeStyle = myDirtyWind.type === "leeBow" ? "rgba(226,114,111,0.9)" : "rgba(240,197,129,0.85)";
+    wctx.lineWidth = 2.5;
+    wctx.beginPath(); wctx.arc(cx, cy, 17 + myDirtyWind.exposure01 * 8, 0, TAU); wctx.stroke();
+  }
   wctx.fillStyle = "rgba(226,236,233,0.75)"; wctx.font = "10.5px 'IBM Plex Mono', monospace"; wctx.textAlign = "center";
   wctx.fillText("YOU", cx, cy - 28);
 }
@@ -791,6 +807,7 @@ const elOcs = document.getElementById("ocsBanner");
 const elPenalty = document.getElementById("penaltyBanner");
 const elPenaltyRule = document.getElementById("penaltyRule");
 const elPenaltyDeg = document.getElementById("penaltyDeg");
+const elDirtyWind = document.getElementById("dirtyWindBanner");
 const elTapeReadout = document.getElementById("tapeReadout");
 const elTrimReadout = document.getElementById("trimReadout");
 const elRaceClock = document.getElementById("raceClock");
@@ -885,6 +902,15 @@ function updateHud(info) {
   elStall.classList.toggle("show", info.drifting);
   elTapeReadout.textContent = Math.round(trueDeg(myBoat.headingDeg)) + "° → " + Math.round(trueDeg(myBoat.targetHeadingDeg)) + "°";
   elTrimReadout.textContent = myBoat.autoTrim ? "auto" : Math.round(myBoat.trimAngleDeg) + "° · " + Math.round(myBoat.trimEfficiency01 * 100) + "%";
+  const dirty = myDirtyWind.exposure01 >= 0.12;
+  elDirtyWind.classList.toggle("show", dirty);
+  if (dirty) {
+    const source = lastSnapshotBoats.find(b => b.boatIndex === myDirtyWind.sourceBoatIndex);
+    const label = myDirtyWind.type === "leeBow" ? "LEE BOW — BACKWINDED"
+      : myDirtyWind.type === "directWake" ? "DIRECT WAKE" : "DIRTY AIR";
+    elDirtyWind.textContent = label + (source ? " BY " + String(source.name || "BOAT").toUpperCase() : "")
+      + " · −" + myDirtyWind.speedDeficitKnots.toFixed(1) + " KT";
+  }
 }
 
 // ---------- main loop ----------

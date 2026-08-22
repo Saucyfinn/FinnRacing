@@ -16,6 +16,17 @@ prototype into real small-fleet racing (up to 6 boats) over WebSockets.
   for your own boat (instant steering feel) and buffered interpolation for
   every other boat, reconciling against the server's snapshots.
 
+### Dirty wind
+
+Before every physics step, the server calculates aerodynamic interference for
+the fleet. It distinguishes a direct wake, the wider trailing dirty-air plume,
+and the asymmetric lee-bow region where a same-tack leeward boat slightly
+ahead can backwind the windward boat. Smoothed exposure reduces the effective
+wind used by the Finn polar; a lee bow also changes its effective direction.
+The resulting interaction is sent in authoritative snapshots for local client
+prediction and the dirty-air warning. Calibration constants are grouped in
+`DIRTY_WIND` in `src/physics.js`.
+
 ## Deploy
 
 Run these from your own machine (or from Claude Code in a terminal) — this

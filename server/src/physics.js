@@ -66,6 +66,19 @@ export const MPS_PER_KNOT = 0.5144;
 
 // ---------- course: windward/leeward, one lap, finish at the start line ----------
 export const FINN_LENGTH_M = 4.5;
+// Aerodynamic gameplay constants are grouped for later on-water calibration.
+export const DIRTY_WIND = Object.freeze({
+  wakeLengthM: FINN_LENGTH_M * 12,
+  wakeDecayM: FINN_LENGTH_M * 6,
+  wakeHalfWidthM: 1.1,
+  wakeSpreadDeg: 12,
+  directWakeSpreadDeg: 4,
+  leeBowAftM: FINN_LENGTH_M * 2.2,
+  leeBowWindwardM: FINN_LENGTH_M * 1.8,
+  leeBowMaxShiftDeg: 7,
+  attackSec: 0.7,
+  releaseSec: 1.8
+});
 export const START_LINE_LENGTH_PER_BOAT = 1.5;
 export const MIN_START_LINE_LENGTH_M = 20;
 export const PIN_X = -10, BOAT_END_X = 10, START_Y = 0;
@@ -120,12 +133,122 @@ export function windAt(baseDir, baseSpeed, t) {
   return { dir, speed };
 }
 
+function cleanDirtyWind(wind) {
+  return {
+    type: "clean", sourceBoatIndex: null, exposure01: 0,
+    speedDeficitKnots: 0, directionShiftDeg: 0,
+    effectiveSpeed: wind.speed, effectiveDir: wind.dir
+  };
+}
+
+// Instantaneous interference from one source. This includes both the normal
+// downwind plume and the near-field lee-bow region where a leeward boat that
+// is slightly ahead backwinds a same-tack windward boat.
+export function dirtyWindFromBoat(target, source, wind) {
+  if (target === source) return { exposure01: 0, type: "clean" };
+  const dx = target.worldX - source.worldX;
+  const dy = target.worldY - source.worldY;
+
+  const flowR = wrap360(wind.dir + 180) * D2R;
+  const flowX = Math.sin(flowR), flowY = -Math.cos(flowR);
+  const downwindM = dx * flowX + dy * flowY;
+  const crosswindM = Math.abs(dx * flowY - dy * flowX);
+
+  let wakeExposure = 0;
+  let wakeType = "clean";
+  if (downwindM > 0.4 && downwindM < DIRTY_WIND.wakeLengthM) {
+    const halfWidth = DIRTY_WIND.wakeHalfWidthM
+      + downwindM * Math.tan(DIRTY_WIND.wakeSpreadDeg * D2R);
+    if (crosswindM < halfWidth * 2.2) {
+      const lateral = Math.exp(-0.5 * Math.pow(crosswindM / halfWidth, 2));
+      wakeExposure = Math.min(0.96, Math.exp(-downwindM / DIRTY_WIND.wakeDecayM) * lateral);
+      const directWidth = 0.7 + downwindM * Math.tan(DIRTY_WIND.directWakeSpreadDeg * D2R);
+      wakeType = crosswindM <= directWidth ? "directWake" : "trailingDirtyAir";
+    }
+  }
+
+  let leeBowExposure = 0;
+  const targetTwa = wrap180(wind.dir - target.headingDeg);
+  const sourceTwa = wrap180(wind.dir - source.headingDeg);
+  if (target.tackSign === source.tackSign
+      && Math.abs(targetTwa) >= 32 && Math.abs(targetTwa) <= 75
+      && Math.abs(sourceTwa) >= 32 && Math.abs(sourceTwa) <= 75) {
+    const hr = source.headingDeg * D2R;
+    const forwardX = Math.sin(hr), forwardY = -Math.cos(hr);
+    const rightX = Math.cos(hr), rightY = Math.sin(hr);
+    const targetAheadM = dx * forwardX + dy * forwardY;
+    const targetWindwardM = (dx * rightX + dy * rightY) * Math.sign(sourceTwa || 1);
+    if (targetAheadM > -DIRTY_WIND.leeBowAftM && targetAheadM < 1.5
+        && targetWindwardM > 0.3 && targetWindwardM < DIRTY_WIND.leeBowWindwardM) {
+      const foreAft = Math.exp(-0.5 * Math.pow((targetAheadM + 2.0) / 3.6, 2));
+      const windward = Math.exp(-0.5 * Math.pow((targetWindwardM - 2.5) / 2.0, 2));
+      leeBowExposure = Math.min(0.94, 0.92 * foreAft * windward);
+    }
+  }
+
+  if (leeBowExposure > wakeExposure) return { exposure01: leeBowExposure, type: "leeBow" };
+  return { exposure01: wakeExposure, type: wakeType };
+}
+
+function maximumDeficitFraction(twsKnots) {
+  // A Finn is proportionally more vulnerable to lost pressure in light air.
+  return lerp(0.38, 0.20, clamp((twsKnots - 5) / 20, 0, 1));
+}
+
+export function stepFleetDirtyWind(boats, wind, dt, boatIndices = boats.map((_, i) => i)) {
+  for (let i = 0; i < boats.length; i++) {
+    const target = boats[i];
+    let clearProduct = 1;
+    let dominant = { exposure01: 0, type: "clean", sourceBoatIndex: null };
+    for (let j = 0; j < boats.length; j++) {
+      if (i === j) continue;
+      const effect = dirtyWindFromBoat(target, boats[j], wind);
+      clearProduct *= 1 - effect.exposure01;
+      if (effect.exposure01 > dominant.exposure01) {
+        dominant = { ...effect, sourceBoatIndex: boatIndices[j] };
+      }
+    }
+
+    const rawExposure = clamp(1 - clearProduct, 0, 1);
+    const old = target.dirtyWind || cleanDirtyWind(wind);
+    const tau = rawExposure > old.exposure01 ? DIRTY_WIND.attackSec : DIRTY_WIND.releaseSec;
+    const blend = 1 - Math.exp(-Math.max(0, dt) / tau);
+    const exposure01 = lerp(old.exposure01, rawExposure, blend);
+    const active = exposure01 >= 0.04;
+    const hasInstantSource = dominant.sourceBoatIndex !== null;
+    const type = active ? (hasInstantSource ? dominant.type : old.type) : "clean";
+    const sourceBoatIndex = active
+      ? (hasInstantSource ? dominant.sourceBoatIndex : old.sourceBoatIndex)
+      : null;
+    const speedDeficitKnots = Math.min(4.5, wind.speed * maximumDeficitFraction(wind.speed) * exposure01);
+    const twaSign = Math.sign(wrap180(wind.dir - target.headingDeg)) || target.tackSign || 1;
+    const directionShiftDeg = type === "leeBow"
+      ? -twaSign * DIRTY_WIND.leeBowMaxShiftDeg * exposure01
+      : 0;
+    target.dirtyWind = {
+      type,
+      sourceBoatIndex,
+      exposure01,
+      speedDeficitKnots,
+      directionShiftDeg,
+      effectiveSpeed: Math.max(2, wind.speed - speedDeficitKnots),
+      effectiveDir: wrap360(wind.dir + directionShiftDeg)
+    };
+  }
+}
+
+export function effectiveWindForBoat(boat, cleanWind) {
+  const dirty = boat.dirtyWind;
+  return dirty ? { dir: dirty.effectiveDir, speed: dirty.effectiveSpeed } : cleanWind;
+}
+
 export function freshBoatState(headingDeg) {
   return {
     headingDeg, targetHeadingDeg: headingDeg, speedKnots: 0,
     trimAngleDeg: 30, trimEfficiency01: 1, autoTrim: true,
     tackSign: 1, tackLockoutTimer: 0,
-    worldX: 0, worldY: 0
+    worldX: 0, worldY: 0,
+    dirtyWind: cleanDirtyWind({ dir: 0, speed: 10 })
   };
 }
 

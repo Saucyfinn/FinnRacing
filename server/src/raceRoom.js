@@ -1,7 +1,7 @@
 import {
   MAX_BOATS, TICK_MS, D2R,
   clamp, wrap360,
-  windAt, freshBoatState, stepBoatKinematics,
+  windAt, freshBoatState, stepBoatKinematics, stepFleetDirtyWind, effectiveWindForBoat,
   freshRaceState, stepRace, stepRules, applyPenaltyOverride, updatePenaltyProgress,
   spawnPositions, startLineForBoatCount, PRESTART_SECONDS, RACE_TIMEOUT_SECONDS
 } from "./physics.js";
@@ -250,17 +250,20 @@ export class RaceRoom {
     for (let i = 0; i < MAX_BOATS; i++) if (this.boats[i]) activeSeats.push(i);
 
     if (this.roomStatus === "lobby") {
-      for (const i of activeSeats) stepBoatKinematics(this.boats[i], wind, dt);
+      const activeBoats = activeSeats.map(i => this.boats[i]);
+      stepFleetDirtyWind(activeBoats, wind, dt, activeSeats);
+      for (const i of activeSeats) stepBoatKinematics(this.boats[i], effectiveWindForBoat(this.boats[i], wind), dt);
     } else {
       this.raceClock += dt;
+      const activeBoats = activeSeats.map(i => this.boats[i]);
+      stepFleetDirtyWind(activeBoats, wind, dt, activeSeats);
       for (const i of activeSeats) {
         const boat = this.boats[i], rs = this.races[i];
         applyPenaltyOverride(boat, rs);
-        stepBoatKinematics(boat, wind, dt);
+        stepBoatKinematics(boat, effectiveWindForBoat(boat, wind), dt);
         updatePenaltyProgress(boat, rs, dt);
         stepRace(boat, rs, this.raceClock, dt, this.startLine);
       }
-      const activeBoats = activeSeats.map(i => this.boats[i]);
       const activeRaces = activeSeats.map(i => this.races[i]);
       stepRules(activeBoats, activeRaces, wind, dt);
 
@@ -315,6 +318,12 @@ export class RaceRoom {
         worldX: round2(b.worldX), worldY: round2(b.worldY), headingDeg: round2(b.headingDeg),
         speedKnots: round2(b.speedKnots), tackSign: b.tackSign, autoTrim: b.autoTrim,
         trimAngleDeg: round2(b.trimAngleDeg), trimEfficiency01: round2(b.trimEfficiency01),
+        dirtyWind: {
+          type: b.dirtyWind.type, sourceBoatIndex: b.dirtyWind.sourceBoatIndex,
+          exposure01: round2(b.dirtyWind.exposure01), speedDeficitKnots: round2(b.dirtyWind.speedDeficitKnots),
+          directionShiftDeg: round2(b.dirtyWind.directionShiftDeg), effectiveSpeed: round2(b.dirtyWind.effectiveSpeed),
+          effectiveDir: round2(b.dirtyWind.effectiveDir)
+        },
         race: {
           status: r.status, leg: r.leg, ocs: r.ocs, finishTime: r.finishTime, place: r.place,
           penalty: { active: r.penalty.active, turnedDeg: round2(r.penalty.turnedDeg), rule: r.penalty.rule }
