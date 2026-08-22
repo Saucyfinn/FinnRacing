@@ -27,6 +27,16 @@ The resulting interaction is sent in authoritative snapshots for local client
 prediction and the dirty-air warning. Calibration constants are grouped in
 `DIRTY_WIND` in `src/physics.js`.
 
+### Individual Finn setup
+
+Each sailor can configure skipper weight (70–120 kg), GS1 minus / GS1 / GS1
+plus / WB sail, mast position (35–56 mm), and rig tension (30–40 kg) in the
+lobby. Setups lock when the start sequence begins and are applied by the
+server-authoritative polar calculation. Mast and tension targets interpolate
+the light, medium, and heavy-air tables in FinnSailAnalyzer. The four named
+sail profiles and skipper-weight trade-offs are explicit gameplay calibration
+data because those exact measurements are not present in the Analyzer.
+
 ## Deploy
 
 Run these from your own machine (or from Claude Code in a terminal) — this
