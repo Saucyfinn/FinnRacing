@@ -52,9 +52,23 @@ let roomStatus = "lobby";
 let raceClock = 0;
 let prestartSeconds = PRESTART_SECONDS;
 let startLine = { pinX: PIN_X, boatEndX: BOAT_END_X, y: START_Y, lengthM: BOAT_END_X - PIN_X };
+let windwardMark = { ...WINDWARD_MARK };
 let lastSnapshotBoats = [];
 const remoteBuffers = {}; // boatIndex -> [{tRecv, worldX, worldY, headingDeg, speedKnots, tackSign, name, color, connected, race}]
 const wakeMap = {}; // boatIndex -> [{x,y,age}]
+const heardHails = new Set();
+let myHail = null;
+
+function hearHail(boat) {
+  if (!boat.hail || heardHails.has(boat.hail.id)) return;
+  heardHails.add(boat.hail.id);
+  if (heardHails.size > 80) heardHails.delete(heardHails.values().next().value);
+  if ("speechSynthesis" in window) {
+    const voice = new SpeechSynthesisUtterance(boat.hail.call.toLowerCase());
+    voice.rate = 1.15; voice.pitch = 0.9; voice.volume = 0.9;
+    window.speechSynthesis.speak(voice);
+  }
+}
 
 // ---------- DOM ----------
 const nameInput = document.getElementById("nameInput");
@@ -69,6 +83,7 @@ const lobbyStatus = document.getElementById("lobbyStatus");
 const startBtn = document.getElementById("startBtn");
 const lobby = document.getElementById("lobby");
 const connDot = document.getElementById("connDot");
+const restartRaceBtn = document.getElementById("restartRaceBtn");
 const aiOpponentCount = document.getElementById("aiOpponentCount");
 const aiFleetApplyBtn = document.getElementById("aiFleetApplyBtn");
 const skipperWeightInput = document.getElementById("skipperWeight");
@@ -255,6 +270,9 @@ copyLinkBtn.addEventListener("click", async () => {
 startBtn.addEventListener("click", () => {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "start" }));
 });
+restartRaceBtn.addEventListener("click", () => {
+  if (ws && ws.readyState === WebSocket.OPEN && isHost) ws.send(JSON.stringify({ t: "restart" }));
+});
 aiFleetApplyBtn.addEventListener("click", () => {
   if (ws && ws.readyState === WebSocket.OPEN && isHost && roomStatus === "lobby") {
     ws.send(JSON.stringify({ t: "ai_fleet", count: Number(aiOpponentCount.value) }));
@@ -273,9 +291,31 @@ const venueMapCoords = document.getElementById("venueMapCoords");
 const venueStatus = document.getElementById("venueStatus");
 const attribution = document.getElementById("attribution");
 let venuePickerMap = null;
+let venueStartMarker = null, venueWindwardMarker = null, venueCourseLine = null;
+
+function coursePickerState() {
+  if (!venueStartMarker || !venueWindwardMarker) return null;
+  const start = venueStartMarker.getLatLng(), mark = venueWindwardMarker.getLatLng();
+  const dLon = (mark.lng - start.lng) * D2R;
+  const lat1 = start.lat * D2R, lat2 = mark.lat * D2R;
+  const y = Math.sin(dLon) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+  return { start, mark, bearingDeg: wrap360(Math.atan2(y, x) / D2R), lengthM: start.distanceTo(mark) };
+}
+
+function updateCoursePicker() {
+  const course = coursePickerState();
+  if (!course) return;
+  venueCourseLine.setLatLngs([course.start, course.mark]);
+  venueInput.value = course.start.lat.toFixed(5) + ", " + course.start.lng.toFixed(5);
+  venueBearing.value = Math.round(course.bearingDeg);
+  venueMapCoords.textContent = "START " + course.start.lat.toFixed(5) + ", " + course.start.lng.toFixed(5)
+    + " · WINDWARD " + Math.round(course.lengthM) + " m @ " + Math.round(course.bearingDeg) + "°T";
+}
 
 function updateVenuePickerReadout() {
   if (!venuePickerMap) return;
+  if (venueStartMarker) { updateCoursePicker(); return; }
   const centre = venuePickerMap.getCenter();
   venueMapCoords.textContent = centre.lat.toFixed(5) + ", " + centre.lng.toFixed(5) + " · zoom " + venuePickerMap.getZoom();
   venueInput.value = centre.lat.toFixed(5) + ", " + centre.lng.toFixed(5);
@@ -290,6 +330,10 @@ function initVenuePicker() {
   window.L.tileLayer("/tiles/{z}/{x}/{y}.webp", {
     minZoom: 5, maxZoom: 20, attribution: "Imagery © LINZ · CC BY 4.0"
   }).addTo(venuePickerMap);
+  venueStartMarker = window.L.marker([-41.001, 172.5], { draggable: true, title: "START" }).addTo(venuePickerMap).bindTooltip("START", { permanent: true, direction: "right" });
+  venueWindwardMarker = window.L.marker([-41.000, 172.5], { draggable: true, title: "WINDWARD" }).addTo(venuePickerMap).bindTooltip("WINDWARD", { permanent: true, direction: "right" });
+  venueCourseLine = window.L.polyline([venueStartMarker.getLatLng(), venueWindwardMarker.getLatLng()], { color: "#4fc3f7", weight: 3, dashArray: "7 5" }).addTo(venuePickerMap);
+  venueStartMarker.on("drag", updateCoursePicker); venueWindwardMarker.on("drag", updateCoursePicker);
   venuePickerMap.on("move zoom", updateVenuePickerReadout);
   updateVenuePickerReadout();
 }
@@ -305,7 +349,7 @@ function parseLatLon(text) {
   return { lat, lon };
 }
 
-function sendVenue(lat, lon) {
+function sendVenue(lat, lon, courseLengthM) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   // Number("") is 0, which would silently mean "wind from due north" every time
   // the field is left blank — treat empty as "server picks".
@@ -313,7 +357,8 @@ function sendVenue(lat, lon) {
   const brg = raw === "" ? NaN : Number(raw);
   ws.send(JSON.stringify({
     t: "venue", lat, lon,
-    bearingDeg: Number.isFinite(brg) ? brg : undefined
+    bearingDeg: Number.isFinite(brg) ? brg : undefined,
+    courseLengthM: Number.isFinite(courseLengthM) ? courseLengthM : undefined
   }));
 }
 
@@ -328,9 +373,9 @@ if (venueApplyBtn) {
 if (venueMapApplyBtn) {
   venueMapApplyBtn.addEventListener("click", () => {
     if (!venuePickerMap) { venueStatus.textContent = "map is still loading"; return; }
-    const centre = venuePickerMap.getCenter();
-    venueStatus.textContent = "setting course at map centre…";
-    sendVenue(centre.lat, centre.lng);
+    const course = coursePickerState();
+    venueStatus.textContent = "setting course from map marks…";
+    if (course) sendVenue(course.start.lat, course.start.lng, course.lengthM);
   });
 }
 if (venueLocateBtn) {
@@ -360,6 +405,12 @@ function applyVenueToUi() {
         venuePickerMap.setView([venue.lat, venue.lon], Math.max(venuePickerMap.getZoom(), 15));
       }
       setTimeout(() => venuePickerMap.invalidateSize(), 0);
+      if (venueStartMarker && venueWindwardMarker) {
+        const markLatLon = localToLatLon(windwardMark.x, windwardMark.y, venue);
+        venueStartMarker.setLatLng([venue.lat, venue.lon]);
+        venueWindwardMarker.setLatLng([markLatLon.lat, markLatLon.lon]);
+        updateCoursePicker();
+      }
     }
     venueStatus.textContent = "course set — wind from " + Math.round(venue.bearingDeg) + "°T"
       + (imageryAvailable ? "" : " · no imagery key on this Worker");
@@ -436,7 +487,7 @@ function updateAutoZoom() {
   if (roomStatus === "lobby" || raceClock < prestartSeconds) {
     points.push({ x: startLine.pinX, y: startLine.y }, { x: startLine.boatEndX, y: startLine.y });
   } else if (myRace.status !== "finished") {
-    points.push(currentMarkFor(myRace.leg));
+    points.push(currentMarkFor(myRace.leg, windwardMark));
   }
   let maxDx = 10, maxDy = 10;
   for (const p of points) {
@@ -499,6 +550,7 @@ function onServerMessage(msg) {
     venue = msg.venue || null;
     if (msg.setup) writeBoatSetup(msg.setup);
     if (msg.startLine) startLine = msg.startLine;
+    if (msg.windwardMark) windwardMark = msg.windwardMark;
     applyVenueToUi();
   } else if (msg.t === "roster") {
     roomStatus = msg.roomStatus;
@@ -507,6 +559,7 @@ function onServerMessage(msg) {
       startSequenceDisplay.textContent = fmtClock(prestartSeconds);
     }
     if (msg.startLine) startLine = msg.startLine;
+    if (msg.windwardMark) windwardMark = msg.windwardMark;
     if (msg.venue !== undefined) { venue = msg.venue; applyVenueToUi(); }
     if (msg.conditions) waterCurrent = msg.conditions;
     if (msg.conditionModel && msg.conditionModel.source !== "manual") {
@@ -567,6 +620,12 @@ function renderRoster(roster, hostId) {
   prestartSecondsInput.disabled = !isHost || roomStatus !== "lobby";
   aiOpponentCount.disabled = !isHost || roomStatus !== "lobby";
   aiFleetApplyBtn.disabled = !isHost || roomStatus !== "lobby";
+  restartRaceBtn.disabled = !isHost || roomStatus === "lobby";
+  restartRaceBtn.style.display = isHost && roomStatus !== "lobby" ? "inline-flex" : "none";
+  if (venueStartMarker && venueWindwardMarker) {
+    const canEditCourse = isHost && roomStatus === "lobby";
+    for (const marker of [venueStartMarker, venueWindwardMarker]) canEditCourse ? marker.dragging.enable() : marker.dragging.disable();
+  }
   if (roomStatus === "lobby") {
     lobby.classList.remove("hide");
     startBtn.disabled = !isHost || isWaiting;
@@ -590,10 +649,12 @@ function onSnapshot(msg) {
   updateGameWindCondition();
   roomStatus = msg.roomStatus; raceClock = msg.raceClock;
   if (msg.startLine) startLine = msg.startLine;
+  if (msg.windwardMark) windwardMark = msg.windwardMark;
   lastSnapshotBoats = msg.boats;
   if (roomStatus !== "lobby" && !isWaiting) lobby.classList.add("hide");
   const now = performance.now();
   for (const b of msg.boats) {
+    hearHail(b);
     if (b.boatIndex === myBoatIndex) {
       if (!myInitialized) {
         myBoat.worldX = b.worldX; myBoat.worldY = b.worldY;
@@ -604,6 +665,7 @@ function onSnapshot(msg) {
       authoritative = b;
       if (b.dirtyWind) myDirtyWind = b.dirtyWind;
       if (b.sailingWind) mySailingWind = b.sailingWind;
+      myHail = b.hail;
       if (b.setup) myBoat.setup = normalizeBoatSetup(b.setup);
       if (b.setupEffect) myBoat.setupEffect = b.setupEffect;
       myRace = b.race;
@@ -613,7 +675,7 @@ function onSnapshot(msg) {
       buf.push({
         tRecv: now, worldX: b.worldX, worldY: b.worldY, headingDeg: b.headingDeg,
         speedKnots: b.speedKnots, tackSign: b.tackSign, name: b.name, color: b.color,
-        connected: b.connected, race: b.race, dirtyWind: b.dirtyWind, setup: b.setup, setupEffect: b.setupEffect
+        connected: b.connected, race: b.race, dirtyWind: b.dirtyWind, setup: b.setup, setupEffect: b.setupEffect, hail: b.hail
       });
       while (buf.length > 12) buf.shift();
     }
@@ -662,7 +724,7 @@ function getRemoteRenderState(boatIndex) {
         headingDeg: a.headingDeg + wrap180(b.headingDeg - a.headingDeg) * t,
         speedKnots: lerp(a.speedKnots, b.speedKnots, t),
         tackSign: b.tackSign, name: b.name, color: b.color, connected: b.connected, race: b.race,
-        dirtyWind: b.dirtyWind, setup: b.setup, setupEffect: b.setupEffect
+        dirtyWind: b.dirtyWind, setup: b.setup, setupEffect: b.setupEffect, hail: b.hail
       };
     }
   }
@@ -878,6 +940,20 @@ function drawMapLayer(cx, cy, w, h) {
   return drewAny;
 }
 
+function drawHailBubble(x, y, hail) {
+  if (!hail) return;
+  const label = hail.call + "!";
+  wctx.save();
+  wctx.font = "700 13px 'IBM Plex Mono', monospace";
+  const width = wctx.measureText(label).width + 20;
+  const left = x - width / 2, top = y - 82;
+  wctx.fillStyle = "rgba(245,251,255,0.94)"; wctx.strokeStyle = "rgba(8,21,27,0.9)"; wctx.lineWidth = 1.5;
+  wctx.beginPath(); wctx.roundRect(left, top, width, 28, 7); wctx.fill(); wctx.stroke();
+  wctx.beginPath(); wctx.moveTo(x - 5, top + 28); wctx.lineTo(x, top + 35); wctx.lineTo(x + 5, top + 28); wctx.fill(); wctx.stroke();
+  wctx.fillStyle = "#08151b"; wctx.textAlign = "center"; wctx.fillText(label, x, top + 19);
+  wctx.restore();
+}
+
 function drawBoatShape(originX, originY, headingDeg, hullColor, sailLean, tackSign) {
   wctx.save();
   wctx.translate(originX, originY);
@@ -961,7 +1037,7 @@ function drawWorld(info, dt) {
   [[pinSx, pinSy], [endSx, endSy]].forEach(([sx, sy]) => {
     wctx.fillStyle = "#f0c581"; wctx.beginPath(); wctx.arc(sx, sy, 4, 0, TAU); wctx.fill();
   });
-  const [mSx, mSy] = toScreen(WINDWARD_MARK.x, WINDWARD_MARK.y);
+  const [mSx, mSy] = toScreen(windwardMark.x, windwardMark.y);
   wctx.fillStyle = "#dba85a"; wctx.beginPath(); wctx.arc(mSx, mSy, 5, 0, TAU); wctx.fill();
   wctx.strokeStyle = "rgba(219,168,90,0.4)"; wctx.lineWidth = 1;
   wctx.beginPath(); wctx.arc(mSx, mSy, 8 * viewScale, 0, TAU); wctx.stroke();
@@ -974,6 +1050,7 @@ function drawWorld(info, dt) {
     if (sx < -60 || sx > w + 60 || sy < -60 || sy > h + 60) continue; // off-screen, skip label work
     maybePushWake(Number(key), r.worldX, r.worldY, r.speedKnots);
     drawBoatShape(sx, sy, r.headingDeg, r.color, 8, r.tackSign);
+    drawHailBubble(sx, sy, r.hail);
     if (r.dirtyWind && r.dirtyWind.exposure01 >= 0.12) {
       wctx.strokeStyle = r.dirtyWind.type === "leeBow" ? "rgba(226,114,111,0.8)" : "rgba(240,197,129,0.75)";
       wctx.lineWidth = 2;
@@ -985,12 +1062,18 @@ function drawWorld(info, dt) {
       wctx.fillStyle = "rgba(226,120,116,0.95)";
       wctx.fillText("PENALTY " + Math.round(r.race.penalty.turnedDeg) + "°/360°", sx, sy - 40);
     }
+    if (r.race && r.race.collision && r.race.collision.active) {
+      wctx.strokeStyle = "rgba(255,85,85,0.95)"; wctx.lineWidth = 3;
+      wctx.beginPath(); wctx.arc(sx, sy, 19, 0, TAU); wctx.stroke();
+      wctx.fillStyle = "#ff8d89"; wctx.fillText("COLLISION", sx, sy - 52);
+    }
   }
 
   // own boat, screen-fixed
   const hullColor = info.drifting ? "#e2726f" : (info.inNoGo ? "#f0c581" : myColor);
   const sailLean = myBoat.autoTrim ? 8 : (myBoat.trimAngleDeg / 90) * 22;
   drawBoatShape(cx, cy, myBoat.headingDeg, hullColor, sailLean, myBoat.tackSign);
+  drawHailBubble(cx, cy, myHail);
   if (myDirtyWind.exposure01 >= 0.12) {
     wctx.strokeStyle = myDirtyWind.type === "leeBow" ? "rgba(226,114,111,0.9)" : "rgba(240,197,129,0.85)";
     wctx.lineWidth = 2.5;
@@ -998,6 +1081,28 @@ function drawWorld(info, dt) {
   }
   wctx.fillStyle = "rgba(226,236,233,0.75)"; wctx.font = "10.5px 'IBM Plex Mono', monospace"; wctx.textAlign = "center";
   wctx.fillText("YOU", cx, cy - 28);
+
+  // Keep the official sequence visible in the sailing view, independent of
+  // the compact sidebar HUD and readable over both imagery and plain water.
+  if (roomStatus === "prestart" || raceClock < prestartSeconds) {
+    const remaining = Math.max(0, prestartSeconds - raceClock);
+    const clock = fmtClock(remaining);
+    const urgent = remaining <= 10;
+    wctx.save();
+    wctx.textAlign = "center";
+    wctx.fillStyle = urgent ? "rgba(86,25,28,0.88)" : "rgba(5,18,31,0.82)";
+    wctx.strokeStyle = urgent ? "rgba(226,114,111,0.95)" : "rgba(79,195,247,0.75)";
+    wctx.lineWidth = 1.5;
+    const boxWidth = 190, boxHeight = 70, boxX = cx - boxWidth / 2, boxY = 24;
+    wctx.beginPath(); wctx.roundRect(boxX, boxY, boxWidth, boxHeight, 10); wctx.fill(); wctx.stroke();
+    wctx.fillStyle = urgent ? "#ff8d89" : "#8bdcff";
+    wctx.font = "600 11px 'IBM Plex Mono', monospace";
+    wctx.fillText("START SEQUENCE", cx, boxY + 20);
+    wctx.fillStyle = "#f5fbff";
+    wctx.font = "700 32px 'IBM Plex Mono', monospace";
+    wctx.fillText(clock, cx, boxY + 55);
+    wctx.restore();
+  }
 }
 
 // ---------- HUD text ----------
@@ -1012,6 +1117,7 @@ const elOcs = document.getElementById("ocsBanner");
 const elPenalty = document.getElementById("penaltyBanner");
 const elPenaltyRule = document.getElementById("penaltyRule");
 const elPenaltyDeg = document.getElementById("penaltyDeg");
+const elCollision = document.getElementById("collisionBanner");
 const elDirtyWind = document.getElementById("dirtyWindBanner");
 const elTapeReadout = document.getElementById("tapeReadout");
 const elTrimReadout = document.getElementById("trimReadout");
@@ -1054,10 +1160,11 @@ function updateRaceHud() {
   } else {
     elRaceClock.textContent = "RACE · " + fmtClock(raceClock - prestartSeconds);
     elRaceLeg.textContent = myRace.leg === 1 ? "→ windward mark" : "→ finish";
-    updateMarkPointer(currentMarkFor(myRace.leg));
+    updateMarkPointer(currentMarkFor(myRace.leg, windwardMark));
   }
   elOcs.classList.toggle("show", myRace.ocs && raceClock < prestartSeconds);
   elPenalty.classList.toggle("show", myRace.penalty.active);
+  elCollision.classList.toggle("show", !!(myRace.collision && myRace.collision.active));
   if (myRace.penalty.active) {
     elPenaltyRule.textContent = myRace.penalty.rule;
     elPenaltyDeg.textContent = " " + Math.round(myRace.penalty.turnedDeg) + "°/360°";

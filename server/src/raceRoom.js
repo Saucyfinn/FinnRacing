@@ -1,6 +1,6 @@
 import {
-  MAX_BOATS, TICK_MS, D2R,
-  clamp, wrap360, bearingTo,
+  MAX_BOATS, TICK_MS, D2R, MPS_PER_KNOT, FINN_LENGTH_M,
+  clamp, wrap360, wrap180, bearingTo,
   windAt, freshBoatState, stepBoatKinematics, stepFleetDirtyWind, effectiveWindForBoat,
   normalizeBoatSetup,
   freshRaceState, stepRace, stepRules, applyPenaltyOverride, updatePenaltyProgress,
@@ -26,6 +26,9 @@ export class RaceRoom {
     this.names = [];
     this.setups = [];
     this.aiSeats = new Set();
+    this.activeHails = new Map();
+    this.hailCooldowns = new Map();
+    this.markRoomRights = new Map();
     // baseDir is 0 by design: the whole simulation runs in a COURSE-LOCAL frame
     // where -Y is always dead upwind, which is what keeps WINDWARD_MARK an
     // actual beat and the start line square to the breeze. Where that course
@@ -45,6 +48,7 @@ export class RaceRoom {
     this.raceClock = 0;
     this.prestartSeconds = PRESTART_SECONDS;
     this.startLine = startLineForBoatCount(0);
+    this.windwardMark = { x: 0, y: -150 };
     this.hostId = null;
     this.restartTimer = 0;
     this.tickHandle = null;
@@ -120,7 +124,7 @@ export class RaceRoom {
       t: "welcome", youId: id, boatIndex: session.boatIndex,
       color: session.boatIndex == null ? "#6b8599" : BOAT_COLORS[session.boatIndex % BOAT_COLORS.length],
       isHost: id === this.hostId, waiting: session.boatIndex == null,
-      maxBoats: MAX_BOATS, venue: this.venue, startLine: this.startLine, setup: session.setup
+      maxBoats: MAX_BOATS, venue: this.venue, startLine: this.startLine, windwardMark: this.windwardMark, setup: session.setup
     }));
     this.broadcastRoster();
     this.ensureTicking();
@@ -159,14 +163,13 @@ export class RaceRoom {
       const currentSpeed = Number(msg.currentSpeedKnots), currentDir = Number(msg.currentDirectionDeg);
       if (![windSpeed, windDir, currentSpeed, currentDir].every(Number.isFinite)) return;
       this.wind.baseSpeed = clamp(windSpeed, 2, 30);
-      // The simulation is course-local: 0° is always toward the windward mark.
-      // Store the selected true wind as the venue bearing and rotate the true
-      // current into that local frame before applying drift.
-      this.wind.baseDir = 0;
-      if (this.venue) this.venue.bearingDeg = wrap360(windDir);
+      // Rotate true wind/current into the map-defined local course frame. The
+      // host may deliberately set a course that is not perfectly square.
+      const courseBearing = this.venue ? this.venue.bearingDeg : windDir;
+      this.wind.baseDir = wrap360(windDir - courseBearing);
       this.wind.t = 0;
       this.waterCurrent = {
-        speedKnots: clamp(currentSpeed, 0, 6), directionDeg: wrap360(currentDir - windDir), trueDirectionDeg: wrap360(currentDir),
+        speedKnots: clamp(currentSpeed, 0, 6), directionDeg: wrap360(currentDir - courseBearing), trueDirectionDeg: wrap360(currentDir),
         seaLevelM: msg.seaLevelM !== null && msg.seaLevelM !== "" && Number.isFinite(Number(msg.seaLevelM))
           ? clamp(Number(msg.seaLevelM), -5, 5) : null,
         source: msg.source === "public" ? "public" : "manual"
@@ -186,6 +189,10 @@ export class RaceRoom {
     if (msg.t === "ai_fleet") {
       if (this.roomStatus !== "lobby" || session.id !== this.hostId) return;
       this.setAiCount(clamp(Math.round(Number(msg.count) || 0), 0, MAX_BOATS - 1));
+      return;
+    }
+    if (msg.t === "restart") {
+      if (session.id === this.hostId && session.boatIndex != null) this.beginRace();
       return;
     }
 
@@ -213,12 +220,21 @@ export class RaceRoom {
       const lat = Number(msg.lat), lon = Number(msg.lon);
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
       if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return;
+      const previousBearing = this.venue ? this.venue.bearingDeg : 0;
+      const trueWindDirection = wrap360(this.wind.baseDir + previousBearing);
+      const trueCurrentDirection = Number.isFinite(this.waterCurrent.trueDirectionDeg)
+        ? this.waterCurrent.trueDirectionDeg : wrap360(this.waterCurrent.directionDeg + previousBearing);
       const brg = Number(msg.bearingDeg);
       this.venue = {
         lat, lon,
         bearingDeg: Number.isFinite(brg) ? ((brg % 360) + 360) % 360
           : (this.venue ? this.venue.bearingDeg : Math.floor(Math.random() * 360))
       };
+      const courseLengthM = clamp(Number(msg.courseLengthM) || Math.abs(this.windwardMark.y), 50, 5000);
+      this.windwardMark = { x: 0, y: -courseLengthM };
+      this.wind.baseDir = wrap360(trueWindDirection - this.venue.bearingDeg);
+      this.waterCurrent.directionDeg = wrap360(trueCurrentDirection - this.venue.bearingDeg);
+      this.waterCurrent.trueDirectionDeg = trueCurrentDirection;
       this.broadcastRoster();
     }
   }
@@ -259,6 +275,7 @@ export class RaceRoom {
     });
     this.raceClock = 0;
     this.raceModel = { ...this.conditionModel };
+    this.activeHails.clear(); this.hailCooldowns.clear(); this.markRoomRights.clear();
     this.roomStatus = "prestart";
     this.broadcast({ t: "start_countdown", prestartSeconds: this.prestartSeconds });
     this.broadcastRoster();
@@ -314,22 +331,121 @@ export class RaceRoom {
     if (!boat || !race || race.penalty.active) return;
     boat.autoTrim = true;
     if (this.roomStatus === "lobby") {
-      boat.targetHeadingDeg = boat.worldX > 12 ? 270 : (boat.worldX < -12 ? 90 : boat.targetHeadingDeg);
+      const phase = this.wind.t * 0.10 + seat * 1.7;
+      this.steerAiTo(seat, Math.sin(phase) * 7, 12 + (seat % 3) * 2, false);
       return;
     }
     if (race.status === "prestart") {
       const remaining = this.prestartSeconds - this.raceClock;
-      boat.targetHeadingDeg = remaining <= 8 ? 0 : (boat.worldX > 10 ? 270 : 90);
+      if (race.ocs) {
+        // Return completely to the prestart side before making another run.
+        this.steerAiTo(seat, clamp(boat.worldX, this.startLine.pinX + 2, this.startLine.boatEndX - 2), 8, false);
+        return;
+      }
+      const fleetOrder = [...this.aiSeats].indexOf(seat);
+      const fleetSize = Math.max(1, this.aiSeats.size);
+      const slotT = (fleetOrder + 1) / (fleetSize + 1);
+      const slotX = this.startLine.pinX + 2 + slotT * (this.startLine.lengthM - 4);
+      const secondsToLine = Math.max(2.5, boat.worldY / Math.max(1.8, boat.speedKnots * 0.5144) + 1.8);
+      if (remaining <= secondsToLine) {
+        this.steerAiTo(seat, slotX, -10, true);
+      } else {
+        // Sail a compact racetrack behind the line instead of disappearing on
+        // a fixed reach. The waypoint remains inside the visible start box.
+        const holdPhase = this.raceClock * 0.16 + seat * 1.9;
+        const holdX = clamp(slotX + Math.sin(holdPhase) * 5, this.startLine.pinX + 2, this.startLine.boatEndX - 2);
+        const holdY = 10 + (Math.cos(holdPhase) + 1) * 3;
+        this.steerAiTo(seat, holdX, holdY, false);
+      }
       return;
     }
     if (race.status === "finished") { boat.targetHeadingDeg = boat.headingDeg; return; }
     if (race.leg === 1) {
-      if (boat.worldX > 12) boat.aiTackHeading = 320;
-      else if (boat.worldX < -12) boat.aiTackHeading = 40;
-      else if (!Number.isFinite(boat.aiTackHeading)) boat.aiTackHeading = seat % 2 ? 40 : 320;
-      boat.targetHeadingDeg = boat.aiTackHeading;
+      const windDir = this.currentWind().dir;
+      const starboard = wrap360(windDir + 42), port = wrap360(windDir - 42);
+      const markDistance = Math.hypot(boat.worldX - this.windwardMark.x, boat.worldY - this.windwardMark.y);
+      if (boat.worldX > 18) boat.aiTackHeading = port;
+      else if (boat.worldX < -18) boat.aiTackHeading = starboard;
+      else if (!Number.isFinite(boat.aiTackHeading)) boat.aiTackHeading = seat % 2 ? starboard : port;
+      // Near the mark, tack onto the layline that converges toward it rather
+      // than continuing past it on the original boundary rule.
+      if (markDistance < 35) boat.aiTackHeading = boat.worldX > 0 ? port : starboard;
+      this.setAiHeadingWithAvoidance(seat, boat.aiTackHeading);
     } else {
-      boat.targetHeadingDeg = bearingTo(boat.worldX, boat.worldY, (this.startLine.pinX + this.startLine.boatEndX) / 2, this.startLine.y + 4);
+      const finishX = (this.startLine.pinX + this.startLine.boatEndX) / 2;
+      this.steerAiTo(seat, finishX, this.startLine.y + 10, false);
+    }
+  }
+
+  steerAiTo(seat, x, y, allowCloseHauled) {
+    const boat = this.boats[seat];
+    let desired = bearingTo(boat.worldX, boat.worldY, x, y);
+    const windDir = this.currentWind().dir;
+    const relativeToWind = ((desired - windDir + 540) % 360) - 180;
+    if (!allowCloseHauled && Math.abs(relativeToWind) < 42) desired = wrap360(windDir + (relativeToWind < 0 ? -42 : 42));
+    else if (allowCloseHauled && Math.abs(relativeToWind) < 38) desired = wrap360(windDir + (boat.worldX > x ? -42 : 42));
+    this.setAiHeadingWithAvoidance(seat, desired);
+  }
+
+  setAiHeadingWithAvoidance(seat, desired) {
+    const boat = this.boats[seat];
+    for (let otherSeat = 0; otherSeat < this.boats.length; otherSeat++) {
+      const other = this.boats[otherSeat];
+      if (!other || otherSeat === seat || !this.connected[otherSeat]) continue;
+      const separation = Math.hypot(other.worldX - boat.worldX, other.worldY - boat.worldY);
+      if (separation >= 7) continue;
+      const otherBearing = bearingTo(boat.worldX, boat.worldY, other.worldX, other.worldY);
+      const side = (((otherBearing - desired + 540) % 360) - 180) >= 0 ? -1 : 1;
+      desired = wrap360(desired + side * (8 - separation) * 4);
+    }
+    boat.targetHeadingDeg = wrap360(desired);
+  }
+
+  issueHail(fromSeat, toSeat, call, type) {
+    const now = this.wind.t, key = type + ":" + fromSeat + ":" + toSeat;
+    if ((this.hailCooldowns.get(key) || 0) > now) return;
+    this.hailCooldowns.set(key, now + 5);
+    this.activeHails.set(fromSeat, { id: key + ":" + Math.floor(now * 10), call, type, toBoatIndex: toSeat, until: now + 2.4 });
+  }
+
+  updateAutoHails(activeSeats, wind) {
+    for (const [seat, hail] of this.activeHails) if (hail.until <= this.wind.t) this.activeHails.delete(seat);
+    const markRoomZone = FINN_LENGTH_M * 3;
+    for (let a = 0; a < activeSeats.length; a++) {
+      for (let b = a + 1; b < activeSeats.length; b++) {
+        const i = activeSeats[a], j = activeSeats[b];
+        const bi = this.boats[i], bj = this.boats[j], ri = this.races[i], rj = this.races[j];
+        if (!bi || !bj || !ri || !rj) continue;
+        if (!["prestart", "racing"].includes(ri.status) || !["prestart", "racing"].includes(rj.status)) continue;
+        const separation = Math.hypot(bj.worldX - bi.worldX, bj.worldY - bi.worldY);
+
+        if (bi.tackSign !== bj.tackSign && separation < 28 && closestApproachMetres(bi, bj, 7) < 7) {
+          const starboardSeat = bi.tackSign > 0 ? i : j, portSeat = starboardSeat === i ? j : i;
+          this.issueHail(starboardSeat, portSeat, "STARBOARD", "starboard");
+        }
+
+        if (bi.tackSign === bj.tackSign && separation < 12) {
+          const downwindR = wrap360(wind.dir + 180) * D2R;
+          const ux = Math.sin(downwindR), uy = -Math.cos(downwindR);
+          const posI = bi.worldX * ux + bi.worldY * uy, posJ = bj.worldX * ux + bj.worldY * uy;
+          const leewardSeat = posI > posJ ? i : j, windwardSeat = leewardSeat === i ? j : i;
+          const leeward = this.boats[leewardSeat];
+          const currentTwa = Math.abs(wrap180(wind.dir - leeward.headingDeg));
+          const targetTwa = Math.abs(wrap180(wind.dir - leeward.targetHeadingDeg));
+          if (targetTwa < currentTwa - 2) this.issueHail(leewardSeat, windwardSeat, "UP", "up");
+        }
+
+        const pairKey = i + ":" + j;
+        if (ri.status === "racing" && rj.status === "racing" && ri.leg === 1 && rj.leg === 1) {
+          const di = Math.hypot(bi.worldX - this.windwardMark.x, bi.worldY - this.windwardMark.y);
+          const dj = Math.hypot(bj.worldX - this.windwardMark.x, bj.worldY - this.windwardMark.y);
+          if (!this.markRoomRights.has(pairKey) && Math.min(di, dj) <= markRoomZone) this.markRoomRights.set(pairKey, di <= dj ? i : j);
+          const entitledSeat = this.markRoomRights.get(pairKey);
+          if (entitledSeat != null && Math.min(di, dj) <= markRoomZone && separation < 16) {
+            this.issueHail(entitledSeat, entitledSeat === i ? j : i, "ROOM", "room");
+          }
+        } else this.markRoomRights.delete(pairKey);
+      }
     }
   }
 
@@ -385,13 +501,18 @@ export class RaceRoom {
       stepFleetDirtyWind(activeBoats, wind, dt, activeSeats);
       for (const i of activeSeats) {
         const boat = this.boats[i], rs = this.races[i];
-        applyPenaltyOverride(boat, rs);
-        stepBoatKinematics(boat, this.windForBoat(boat, wind), dt, this.waterCurrent);
-        updatePenaltyProgress(boat, rs, dt);
-        stepRace(boat, rs, this.raceClock, dt, this.startLine, this.prestartSeconds);
+        if (rs.collision && rs.collision.active) {
+          boat.speedKnots = 0;
+        } else {
+          applyPenaltyOverride(boat, rs);
+          stepBoatKinematics(boat, this.windForBoat(boat, wind), dt, this.waterCurrent);
+          updatePenaltyProgress(boat, rs, dt);
+        }
+        stepRace(boat, rs, this.raceClock, dt, this.startLine, this.prestartSeconds, this.windwardMark);
       }
       const activeRaces = activeSeats.map(i => this.races[i]);
-      stepRules(activeBoats, activeRaces, wind, dt);
+      stepRules(activeBoats, activeRaces, wind, dt, activeSeats);
+      this.updateAutoHails(activeSeats, wind);
 
       if (this.roomStatus === "prestart" || this.roomStatus === "racing") {
         const anyRacing = activeSeats.some(i => this.races[i].status === "racing");
@@ -438,7 +559,7 @@ export class RaceRoom {
       id: "ai-" + seat, boatIndex: seat, name: this.names[seat], connected: true, waiting: false, ai: true,
       setup: this.setups[seat], color: BOAT_COLORS[seat % BOAT_COLORS.length]
     });
-    this.broadcast({ t: "roster", roster, hostId: this.hostId, roomStatus: this.roomStatus, venue: this.venue, startLine: this.startLine, conditions: this.waterCurrent, conditionModel: this.conditionModel, prestartSeconds: this.prestartSeconds, aiCount: this.aiSeats.size });
+    this.broadcast({ t: "roster", roster, hostId: this.hostId, roomStatus: this.roomStatus, venue: this.venue, startLine: this.startLine, windwardMark: this.windwardMark, conditions: this.waterCurrent, conditionModel: this.conditionModel, prestartSeconds: this.prestartSeconds, aiCount: this.aiSeats.size });
   }
 
   broadcastSnapshot(wind, activeSeats) {
@@ -451,6 +572,7 @@ export class RaceRoom {
         trimAngleDeg: round2(b.trimAngleDeg), trimEfficiency01: round2(b.trimEfficiency01),
         setup: b.setup,
         sailingWind: this.windForBoat(b, wind),
+        hail: this.activeHails.get(i) || null,
         setupEffect: {
           speedMultiplier: round3(b.setupEffect.speedMultiplier), accelerationMultiplier: round3(b.setupEffect.accelerationMultiplier),
           pointingPenaltyDeg: round2(b.setupEffect.pointingPenaltyDeg), rigMatch01: round3(b.setupEffect.rigMatch01),
@@ -464,13 +586,14 @@ export class RaceRoom {
         },
         race: {
           status: r.status, leg: r.leg, ocs: r.ocs, finishTime: r.finishTime, place: r.place,
-          penalty: { active: r.penalty.active, turnedDeg: round2(r.penalty.turnedDeg), rule: r.penalty.rule }
+          penalty: { active: r.penalty.active, turnedDeg: round2(r.penalty.turnedDeg), rule: r.penalty.rule },
+          collision: r.collision
         }
       };
     });
     this.broadcast({
       t: "snapshot", serverTimeMs: Date.now(), wind: { dir: round2(wind.dir), speed: round2(wind.speed) },
-      roomStatus: this.roomStatus, raceClock: round2(this.raceClock), prestartSeconds: this.prestartSeconds, startLine: this.startLine, waterCurrent: this.waterCurrent, conditionModel: this.raceModel || this.conditionModel, boats
+      roomStatus: this.roomStatus, raceClock: round2(this.raceClock), prestartSeconds: this.prestartSeconds, startLine: this.startLine, windwardMark: this.windwardMark, waterCurrent: this.waterCurrent, conditionModel: this.raceModel || this.conditionModel, boats
     });
   }
 
@@ -488,4 +611,16 @@ function hashString(value) {
   let hash = 2166136261;
   for (let i = 0; i < value.length; i++) { hash ^= value.charCodeAt(i); hash = Math.imul(hash, 16777619); }
   return hash >>> 0;
+}
+function closestApproachMetres(a, b, horizonSeconds) {
+  const velocity = boat => ({
+    x: Math.sin(boat.headingDeg * D2R) * boat.speedKnots * MPS_PER_KNOT,
+    y: -Math.cos(boat.headingDeg * D2R) * boat.speedKnots * MPS_PER_KNOT
+  });
+  const va = velocity(a), vb = velocity(b);
+  const rx = b.worldX - a.worldX, ry = b.worldY - a.worldY;
+  const vx = vb.x - va.x, vy = vb.y - va.y;
+  const speed2 = vx * vx + vy * vy;
+  const time = speed2 > 0.0001 ? clamp(-(rx * vx + ry * vy) / speed2, 0, horizonSeconds) : 0;
+  return Math.hypot(rx + vx * time, ry + vy * time);
 }

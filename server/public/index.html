@@ -323,13 +323,13 @@
       <p class="weather-meta">AI boats use the same Finn polar, setup, dirty wind, rules, and tidal current as human sailors.</p>
     </div>
     <div class="lobby-field">
-      <label>Race area &mdash; zoom and place the crosshair over the course</label>
+      <label>Race area &mdash; drag START and WINDWARD marks to set course and length</label>
       <div class="venue-map-wrap">
         <div id="venueMap" aria-label="New Zealand race area map"></div>
         <div class="venue-crosshair" aria-hidden="true"></div>
       </div>
       <div class="venue-map-footer">
-        <span class="venue-map-coords" id="venueMapCoords">Move the map to choose an area</span>
+        <span class="venue-map-coords" id="venueMapCoords">Drag course marks to choose the course</span>
         <button class="ghost active" id="venueMapApplyBtn" type="button" disabled>SET COURSE HERE</button>
       </div>
       <label style="margin-top:12px">Or paste coordinates</label>
@@ -390,6 +390,7 @@
         <button class="zoom-btn" id="zoomInBtn" type="button" aria-label="Zoom in">+</button>
       </span>
       <span class="conn-dot" id="connDot" title="connection"></span>
+      <button class="zoom-btn" id="restartRaceBtn" type="button" disabled>RESTART</button>
     </div>
 
     <div class="card fleet-card" id="fleetCard"></div>
@@ -399,6 +400,7 @@
   <div class="stall-banner" id="stallBanner">IN IRONS &mdash; NO DRIVE</div>
   <div class="stall-banner dirty-wind-banner" id="dirtyWindBanner">DIRTY AIR</div>
   <div class="stall-banner penalty-banner" id="penaltyBanner">PENALTY TURN &mdash; <span id="penaltyRule"></span><span class="p-deg" id="penaltyDeg"></span></div>
+  <div class="stall-banner penalty-banner" id="collisionBanner">COLLISION &mdash; BOATS STOPPED</div>
 
   <div class="controls">
     <div class="control-block">

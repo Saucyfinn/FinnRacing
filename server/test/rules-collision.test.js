@@ -1,0 +1,62 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { freshBoatState, freshRaceState, HULL_COLLISION_RADIUS_M, stepRules } from "../src/physics.js";
+
+test("a collision stops and separates both boats and penalizes port tack", () => {
+  const port = freshBoatState(40), starboard = freshBoatState(320);
+  port.tackSign = -1; starboard.tackSign = 1;
+  port.worldX = 0; port.worldY = 0; port.speedKnots = 5;
+  starboard.worldX = 2; starboard.worldY = 0; starboard.speedKnots = 5;
+  const portRace = freshRaceState(), starboardRace = freshRaceState();
+  portRace.status = "racing"; starboardRace.status = "racing";
+
+  stepRules([port, starboard], [portRace, starboardRace], { dir: 0, speed: 12 }, 0.1, [3, 5]);
+
+  assert.equal(port.speedKnots, 0);
+  assert.equal(starboard.speedKnots, 0);
+  assert.ok(Math.hypot(port.worldX - starboard.worldX, port.worldY - starboard.worldY) >= HULL_COLLISION_RADIUS_M);
+  assert.equal(portRace.collision.active, true);
+  assert.equal(starboardRace.collision.active, true);
+  assert.equal(portRace.collision.withBoatIndex, 5);
+  assert.equal(starboardRace.collision.withBoatIndex, 3);
+  assert.equal(portRace.penalty.active, true);
+  assert.match(portRace.penalty.rule, /Rule 10.*collision/);
+  assert.equal(starboardRace.penalty.active, false);
+});
+
+test("a close windward boat receives Rule 11 without a collision stop", () => {
+  const leeward = freshBoatState(40), windward = freshBoatState(40);
+  leeward.tackSign = 1; windward.tackSign = 1;
+  leeward.worldX = 0; leeward.worldY = 0;
+  windward.worldX = -3.5; windward.worldY = -2.94;
+  leeward.speedKnots = 4; windward.speedKnots = 4;
+  const leewardRace = freshRaceState(), windwardRace = freshRaceState();
+  leewardRace.status = "racing"; windwardRace.status = "racing";
+
+  stepRules([leeward, windward], [leewardRace, windwardRace], { dir: 0, speed: 12 }, 0.1);
+
+  assert.equal(windwardRace.penalty.active, true);
+  assert.match(windwardRace.penalty.rule, /Rule 11/);
+  assert.equal(leeward.speedKnots, 4);
+  assert.equal(windward.speedKnots, 4);
+});
+
+test("a clear-astern boat receives Rule 12 during prestart", () => {
+  const astern = freshBoatState(90), ahead = freshBoatState(90);
+  astern.worldX = 0; ahead.worldX = 4.6;
+  const asternRace = freshRaceState(), aheadRace = freshRaceState();
+  stepRules([astern, ahead], [asternRace, aheadRace], { dir: 0, speed: 12 }, 0.1);
+  assert.equal(asternRace.penalty.active, true);
+  assert.match(asternRace.penalty.rule, /Rule 12/);
+});
+
+test("a boat while tacking receives Rule 13", () => {
+  const tacking = freshBoatState(45), steady = freshBoatState(45);
+  tacking.worldX = 0; steady.worldX = 4.6;
+  tacking.tackLockoutTimer = 1;
+  const tackingRace = freshRaceState(), steadyRace = freshRaceState();
+  stepRules([tacking, steady], [tackingRace, steadyRace], { dir: 0, speed: 12 }, 0.1);
+  assert.equal(tackingRace.penalty.active, true);
+  assert.match(tackingRace.penalty.rule, /Rule 13/);
+});

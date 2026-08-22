@@ -54,3 +54,14 @@ test("custom start sequence controls when a line crossing starts the race", () =
   stepRace(boat, race, 60, 0, undefined, 60);
   assert.equal(race.status, "racing");
 });
+
+test("downwind return crossing completes the race", () => {
+  const boat = freshBoatState(180);
+  const race = freshRaceState();
+  race.status = "racing"; race.leg = 2;
+  race.prevWorldX = 0; race.prevWorldY = -1;
+  boat.worldX = 0; boat.worldY = 1;
+  stepRace(boat, race, 200, 0, undefined, 60, { x: 0, y: -250 });
+  assert.equal(race.status, "finished");
+  assert.equal(race.finishTime, 140);
+});

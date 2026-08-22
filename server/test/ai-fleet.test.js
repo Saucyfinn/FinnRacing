@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { RaceRoom } from "../src/raceRoom.js";
+import { stepBoatKinematics, stepRace } from "../src/physics.js";
 
 function room() { return new RaceRoom({}, {}); }
 
@@ -28,11 +29,34 @@ test("AI starts on the signal and chooses an upwind tack", () => {
   raceRoom.beginRace();
   raceRoom.raceClock = raceRoom.prestartSeconds - 7;
   raceRoom.steerAi(seat);
-  assert.equal(raceRoom.boats[seat].targetHeadingDeg, 0);
+  const startRelativeWind = Math.abs(((raceRoom.boats[seat].targetHeadingDeg - raceRoom.currentWind().dir + 540) % 360) - 180);
+  assert.ok(startRelativeWind >= 38 && startRelativeWind <= 46);
 
   raceRoom.races[seat].status = "racing";
   raceRoom.races[seat].leg = 1;
   raceRoom.boats[seat].worldX = 20;
   raceRoom.steerAi(seat);
-  assert.equal(raceRoom.boats[seat].targetHeadingDeg, 320);
+  const tackRelativeWind = ((raceRoom.boats[seat].targetHeadingDeg - raceRoom.currentWind().dir + 540) % 360) - 180;
+  assert.ok(tackRelativeWind <= -38 && tackRelativeWind >= -46);
+});
+
+test("AI remains on the course, rounds the mark, and finishes", () => {
+  const raceRoom = room();
+  raceRoom.prestartSeconds = 30;
+  raceRoom.setAiCount(1);
+  raceRoom.beginRace();
+  const [seat] = raceRoom.aiSeats;
+  let maximumDistance = 0;
+  for (let tick = 0; tick < 9000 && raceRoom.races[seat].status !== "finished"; tick++) {
+    raceRoom.raceClock = tick * 0.1;
+    raceRoom.roomStatus = raceRoom.raceClock < raceRoom.prestartSeconds ? "prestart" : "racing";
+    raceRoom.steerAi(seat);
+    const wind = raceRoom.currentWind();
+    stepBoatKinematics(raceRoom.boats[seat], wind, 0.1, raceRoom.waterCurrent);
+    stepRace(raceRoom.boats[seat], raceRoom.races[seat], raceRoom.raceClock, 0.1,
+      raceRoom.startLine, raceRoom.prestartSeconds, raceRoom.windwardMark);
+    maximumDistance = Math.max(maximumDistance, Math.hypot(raceRoom.boats[seat].worldX, raceRoom.boats[seat].worldY));
+  }
+  assert.equal(raceRoom.races[seat].status, "finished");
+  assert.ok(maximumDistance < 250);
 });

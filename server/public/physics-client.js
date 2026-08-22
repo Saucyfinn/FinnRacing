@@ -117,8 +117,8 @@ export function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
 export function bearingTo(fromX, fromY, toX, toY) {
   return wrap360(Math.atan2(toX - fromX, -(toY - fromY)) / D2R);
 }
-export function currentMarkFor(leg) {
-  return leg === 1 ? WINDWARD_MARK : { x: (PIN_X + BOAT_END_X) / 2, y: START_Y };
+export function currentMarkFor(leg, windwardMark = WINDWARD_MARK) {
+  return leg === 1 ? windwardMark : { x: (PIN_X + BOAT_END_X) / 2, y: START_Y };
 }
 
 export function idealTrimAngle(twaDeg) { return clamp(twaDeg * 0.5, 6, 80); }

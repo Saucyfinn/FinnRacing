@@ -169,6 +169,8 @@ export const RACE_TIMEOUT_SECONDS = 240;
 
 // ---------- right-of-way rules ----------
 export const INFRINGEMENT_RADIUS = 5;
+export const HULL_COLLISION_RADIUS_M = 4.2;
+export const COLLISION_STOP_SECONDS = 1.5;
 export const PENALTY_TURN_DEG = 360;
 export const PENALTY_IMMUNITY_SEC = 4;
 
@@ -393,15 +395,16 @@ export function stepBoatKinematics(s, wind, dt, waterCurrent = null) {
 export function freshRaceState() {
   return {
     status: "prestart", leg: 1, ocs: false, prevWorldX: 0, prevWorldY: 0, finishTime: null, place: null,
-    penalty: { active: false, turnedDeg: 0, rule: null, lastHeading: 0 }, immunityTimer: 0
+    penalty: { active: false, turnedDeg: 0, rule: null, lastHeading: 0 }, immunityTimer: 0,
+    collision: { active: false, timer: 0, withBoatIndex: null }
   };
 }
 
-export function currentMarkFor(rs) {
-  return rs.leg === 1 ? WINDWARD_MARK : { x: (PIN_X + BOAT_END_X) / 2, y: START_Y };
+export function currentMarkFor(rs, windwardMark = WINDWARD_MARK) {
+  return rs.leg === 1 ? windwardMark : { x: (PIN_X + BOAT_END_X) / 2, y: START_Y };
 }
 
-export function stepRace(s, rs, raceClock, dt, startLine = { pinX: PIN_X, boatEndX: BOAT_END_X, y: START_Y }, prestartSeconds = PRESTART_SECONDS) {
+export function stepRace(s, rs, raceClock, dt, startLine = { pinX: PIN_X, boatEndX: BOAT_END_X, y: START_Y }, prestartSeconds = PRESTART_SECONDS, windwardMark = WINDWARD_MARK) {
   if (rs.status === "finished") { rs.prevWorldX = s.worldX; rs.prevWorldY = s.worldY; return; }
   const crossing = crossedLine(rs.prevWorldX, rs.prevWorldY, s.worldX, s.worldY, startLine.y, Math.min(startLine.pinX, startLine.boatEndX), Math.max(startLine.pinX, startLine.boatEndX));
   const afterStart = raceClock >= prestartSeconds;
@@ -415,8 +418,8 @@ export function stepRace(s, rs, raceClock, dt, startLine = { pinX: PIN_X, boatEn
     }
   } else if (rs.status === "racing") {
     if (rs.leg === 1) {
-      if (dist(s.worldX, s.worldY, WINDWARD_MARK.x, WINDWARD_MARK.y) < MARK_RADIUS) rs.leg = 2;
-    } else if (rs.leg === 2 && crossing === "south-to-north") {
+      if (dist(s.worldX, s.worldY, windwardMark.x, windwardMark.y) < MARK_RADIUS) rs.leg = 2;
+    } else if (rs.leg === 2 && crossing === "north-to-south") {
       rs.status = "finished";
       rs.finishTime = raceClock - prestartSeconds;
     }
@@ -449,34 +452,66 @@ export function startPenalty(s, rs, rule) {
 // Generalized from the 2-boat prototype to N boats: every pair within the
 // infringement radius during "racing" is checked; a foul on either member
 // of a pair skips that pair (one foul at a time per boat, same rule as before).
-export function stepRules(boats, races, wind, dt) {
+export function stepRules(boats, races, wind, dt, seatIds = boats.map((_, index) => index)) {
   for (const rs of races) {
     if (rs.immunityTimer > 0) rs.immunityTimer -= dt;
+    if (rs.collision && rs.collision.timer > 0) {
+      rs.collision.timer = Math.max(0, rs.collision.timer - dt);
+      rs.collision.active = rs.collision.timer > 0;
+    }
   }
   for (let i = 0; i < boats.length; i++) {
     for (let j = i + 1; j < boats.length; j++) {
       const bi = boats[i], bj = boats[j];
       const ri = races[i], rj = races[j];
-      if (ri.status !== "racing" || rj.status !== "racing") continue;
-      if (ri.penalty.active || rj.penalty.active) continue;
-      if (dist(bi.worldX, bi.worldY, bj.worldX, bj.worldY) >= INFRINGEMENT_RADIUS) continue;
+      if (!["prestart", "racing"].includes(ri.status) || !["prestart", "racing"].includes(rj.status)) continue;
+      const separation = dist(bi.worldX, bi.worldY, bj.worldX, bj.worldY);
+      if (separation >= INFRINGEMENT_RADIUS) continue;
 
       let giveWayIsI, rule;
-      if (bi.tackSign !== bj.tackSign) {
+      if (bi.tackLockoutTimer > 0 && bj.tackLockoutTimer <= 0) {
+        giveWayIsI = true;
+        rule = "Rule 13 — while tacking";
+      } else if (bj.tackLockoutTimer > 0 && bi.tackLockoutTimer <= 0) {
+        giveWayIsI = false;
+        rule = "Rule 13 — while tacking";
+      } else if (bi.tackSign !== bj.tackSign) {
         giveWayIsI = bi.tackSign < 0;
         rule = "Rule 10 — port/starboard";
       } else {
-        const downwind = wrap360(wind.dir + 180) * D2R;
-        const ux = Math.sin(downwind), uy = -Math.cos(downwind);
-        const posI = bi.worldX * ux + bi.worldY * uy;
-        const posJ = bj.worldX * ux + bj.worldY * uy;
-        giveWayIsI = posI < posJ;
-        rule = "Rule 11 — windward/leeward";
+        const dx = bj.worldX - bi.worldX, dy = bj.worldY - bi.worldY;
+        const headingR = bi.headingDeg * D2R;
+        const aheadM = dx * Math.sin(headingR) + dy * -Math.cos(headingR);
+        if (Math.abs(aheadM) > FINN_LENGTH_M * 0.55) {
+          giveWayIsI = aheadM > 0;
+          rule = "Rule 12 — clear astern/clear ahead";
+        } else {
+          const downwind = wrap360(wind.dir + 180) * D2R;
+          const ux = Math.sin(downwind), uy = -Math.cos(downwind);
+          const posI = bi.worldX * ux + bi.worldY * uy;
+          const posJ = bj.worldX * ux + bj.worldY * uy;
+          giveWayIsI = posI < posJ;
+          rule = "Rule 11 — windward/leeward";
+        }
+      }
+
+      if (separation < HULL_COLLISION_RADIUS_M) {
+        const nx = separation > 0.001 ? (bj.worldX - bi.worldX) / separation : 1;
+        const ny = separation > 0.001 ? (bj.worldY - bi.worldY) / separation : 0;
+        const correction = (HULL_COLLISION_RADIUS_M - separation) / 2 + 0.02;
+        bi.worldX -= nx * correction; bi.worldY -= ny * correction;
+        bj.worldX += nx * correction; bj.worldY += ny * correction;
+        bi.speedKnots = 0; bj.speedKnots = 0;
+        ri.collision = { active: true, timer: COLLISION_STOP_SECONDS, withBoatIndex: seatIds[j] };
+        rj.collision = { active: true, timer: COLLISION_STOP_SECONDS, withBoatIndex: seatIds[i] };
+        ri.prevWorldX = bi.worldX; ri.prevWorldY = bi.worldY;
+        rj.prevWorldX = bj.worldX; rj.prevWorldY = bj.worldY;
+        rule += " · collision";
       }
 
       const giveWayBoat = giveWayIsI ? bi : bj;
       const giveWayRace = giveWayIsI ? ri : rj;
-      if (giveWayRace.immunityTimer > 0) continue;
+      if (ri.penalty.active || rj.penalty.active || giveWayRace.immunityTimer > 0) continue;
       startPenalty(giveWayBoat, giveWayRace, rule);
     }
   }
