@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   FINN_CLOSE_HAULED_MAX_KNOTS,
+  FINN_LENGTH_M,
+  FINN_BEAM_M,
   freshBoatState,
   freshRaceState,
   polarSpeed,
@@ -12,11 +14,17 @@ import {
   leewardGateForStartLine
 } from "../src/physics.js";
 import {
+  FINN_LENGTH_M as CLIENT_FINN_LENGTH_M,
+  FINN_BEAM_M as CLIENT_FINN_BEAM_M,
   leewardGateForStartLine as clientLeewardGateForStartLine,
   currentMarkFor as clientCurrentMarkFor
 } from "../public/physics-client.js";
 
 test("default line and course geometry match the sailing instructions", () => {
+  assert.equal(FINN_LENGTH_M, 4.5);
+  assert.equal(FINN_BEAM_M, 1.51);
+  assert.equal(CLIENT_FINN_LENGTH_M, FINN_LENGTH_M);
+  assert.equal(CLIENT_FINN_BEAM_M, FINN_BEAM_M);
   assert.equal(startLineForBoatCount(0).lengthM, 20);
   assert.equal(startLineForBoatCount(2).lengthM, 20);
   assert.equal(startLineForBoatCount(4).lengthM, 27);

@@ -146,6 +146,7 @@ export function boatSetupPerformance(setupValue, twsKnots) {
 
 // ---------- course: two windward/leewards with a downwind finish ----------
 export const FINN_LENGTH_M = 4.5;
+export const FINN_BEAM_M = 1.51;
 // Aerodynamic gameplay constants are grouped for later on-water calibration.
 export const DIRTY_WIND = Object.freeze({
   wakeLengthM: FINN_LENGTH_M * 12,

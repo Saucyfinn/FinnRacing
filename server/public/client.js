@@ -1,7 +1,7 @@
 import {
   D2R, clamp, lerp, wrap360, wrap180,
   NO_GO_HALF, TRIM_MAX_ERROR, PX_PER_METER,
-  PIN_X, BOAT_END_X, START_Y, WINDWARD_MARK, PRESTART_SECONDS,
+  FINN_LENGTH_M, FINN_BEAM_M, PIN_X, BOAT_END_X, START_Y, WINDWARD_MARK, PRESTART_SECONDS,
   idealTrimAngle, stepBoatKinematics, freshBoatState, normalizeBoatSetup, boatSetupPerformance,
   dist, bearingTo, currentMarkFor, leewardGateForStartLine
 } from "./physics-client.js";
@@ -987,16 +987,34 @@ function drawMapCompass(w) {
   wctx.restore();
 }
 
-function drawBoatShape(originX, originY, headingDeg, hullColor, sailLean, tackSign) {
+function drawBoatShape(originX, originY, headingDeg, hullColor, trimAngleDeg, tackSign) {
+  const hullLength = FINN_LENGTH_M * viewScale;
+  const halfBeam = FINN_BEAM_M * viewScale / 2;
+  const bowY = -hullLength / 2, sternY = hullLength / 2;
   wctx.save();
   wctx.translate(originX, originY);
   wctx.rotate(headingDeg * D2R);
   wctx.fillStyle = hullColor;
   wctx.beginPath();
-  wctx.moveTo(0, -20); wctx.lineTo(9, 14); wctx.lineTo(0, 8); wctx.lineTo(-9, 14);
+  wctx.moveTo(0, bowY);
+  wctx.quadraticCurveTo(halfBeam, -hullLength * 0.2, halfBeam, hullLength * 0.22);
+  wctx.lineTo(halfBeam * 0.72, sternY);
+  wctx.lineTo(-halfBeam * 0.72, sternY);
+  wctx.lineTo(-halfBeam, hullLength * 0.22);
+  wctx.quadraticCurveTo(-halfBeam, -hullLength * 0.2, 0, bowY);
   wctx.closePath(); wctx.fill();
-  wctx.strokeStyle = "rgba(226,236,233,0.55)"; wctx.lineWidth = 2;
-  wctx.beginPath(); wctx.moveTo(0, -14); wctx.lineTo((tackSign > 0 ? -1 : 1) * sailLean, 6); wctx.stroke();
+  wctx.strokeStyle = "rgba(226,236,233,0.7)"; wctx.lineWidth = Math.max(0.6, Math.min(1.5, viewScale * 0.18));
+  wctx.stroke();
+
+  // Top-down boom/sail plan, scaled in metres like the hull.
+  const boomLength = 2.3 * viewScale;
+  const trim = clamp(Math.abs(trimAngleDeg), 0, 90) * D2R;
+  const mastY = -0.35 * viewScale;
+  const side = tackSign > 0 ? -1 : 1;
+  wctx.beginPath();
+  wctx.moveTo(0, mastY);
+  wctx.lineTo(side * Math.sin(trim) * boomLength, mastY + Math.cos(trim) * boomLength);
+  wctx.stroke();
   wctx.restore();
 }
 
@@ -1097,7 +1115,7 @@ function drawWorld(info, dt) {
     const [sx, sy] = toScreen(r.worldX, r.worldY);
     if (sx < -60 || sx > w + 60 || sy < -60 || sy > h + 60) continue; // off-screen, skip label work
     maybePushWake(Number(key), r.worldX, r.worldY, r.speedKnots);
-    drawBoatShape(sx, sy, r.headingDeg, r.color, 8, r.tackSign);
+    drawBoatShape(sx, sy, r.headingDeg, r.color, r.trimAngleDeg, r.tackSign);
     drawHailBubble(sx, sy, r.hail);
     if (r.dirtyWind && r.dirtyWind.exposure01 >= 0.12) {
       wctx.strokeStyle = r.dirtyWind.type === "leeBow" ? "rgba(226,114,111,0.8)" : "rgba(240,197,129,0.75)";
@@ -1125,8 +1143,7 @@ function drawWorld(info, dt) {
 
   // own boat, screen-fixed
   const hullColor = info.drifting ? "#e2726f" : (info.inNoGo ? "#f0c581" : myColor);
-  const sailLean = myBoat.autoTrim ? 8 : (myBoat.trimAngleDeg / 90) * 22;
-  drawBoatShape(cx, cy, myBoat.headingDeg, hullColor, sailLean, myBoat.tackSign);
+  drawBoatShape(cx, cy, myBoat.headingDeg, hullColor, myBoat.trimAngleDeg, myBoat.tackSign);
   drawHailBubble(cx, cy, myHail);
   if (myDirtyWind.exposure01 >= 0.12) {
     wctx.strokeStyle = myDirtyWind.type === "leeBow" ? "rgba(226,114,111,0.9)" : "rgba(240,197,129,0.85)";

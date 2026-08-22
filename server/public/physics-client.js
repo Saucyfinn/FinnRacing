@@ -109,6 +109,8 @@ export function boatSetupPerformance(setupValue, twsKnots) {
   };
 }
 
+export const FINN_LENGTH_M = 4.5;
+export const FINN_BEAM_M = 1.51;
 export const PIN_X = -10, BOAT_END_X = 10, START_Y = 0;
 export const WINDWARD_MARK = { x: 0, y: -1852 };
 export const LEEWARD_GATE_OFFSET_M = -5;
