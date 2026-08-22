@@ -113,22 +113,25 @@ export const FINN_LENGTH_M = 4.5;
 export const FINN_BEAM_M = 1.51;
 export const PIN_X = -10, BOAT_END_X = 10, START_Y = 0;
 export const WINDWARD_MARK = { x: 0, y: -1852 };
-export const LEEWARD_GATE_OFFSET_M = -5;
-export const LEEWARD_GATE_WIDTH_M = 20;
+export const LEEWARD_GATE_OFFSET_M = -100;
+export const LEEWARD_GATE_WIDTH_M = 15;
 export const PRESTART_SECONDS = 180;
 
 export function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
 export function bearingTo(fromX, fromY, toX, toY) {
   return wrap360(Math.atan2(toX - fromX, -(toY - fromY)) / D2R);
 }
-export function leewardGateForStartLine(startLine) {
-  const centreX = (startLine.pinX + startLine.boatEndX) / 2;
-  return { portX: centreX - LEEWARD_GATE_WIDTH_M / 2, starboardX: centreX + LEEWARD_GATE_WIDTH_M / 2, y: startLine.y + LEEWARD_GATE_OFFSET_M };
+export function leewardGateForStartLine(startLine, gateConfig = {}) {
+  const lineCentreX = (startLine.pinX + startLine.boatEndX) / 2;
+  const centreX = lineCentreX + (Number.isFinite(gateConfig.centerX) ? gateConfig.centerX : 0);
+  const widthM = Number.isFinite(gateConfig.widthM) ? gateConfig.widthM : LEEWARD_GATE_WIDTH_M;
+  const offsetM = Number.isFinite(gateConfig.offsetM) ? gateConfig.offsetM : LEEWARD_GATE_OFFSET_M;
+  return { portX: centreX - widthM / 2, starboardX: centreX + widthM / 2, y: startLine.y + offsetM };
 }
-export function currentMarkFor(leg, windwardMark = WINDWARD_MARK, startLine = { pinX: PIN_X, boatEndX: BOAT_END_X, y: START_Y }) {
+export function currentMarkFor(leg, windwardMark = WINDWARD_MARK, startLine = { pinX: PIN_X, boatEndX: BOAT_END_X, y: START_Y }, gateConfig) {
   if (leg === 1 || leg === 3) return windwardMark;
   if (leg === 2 || leg === 4) {
-    const gate = leewardGateForStartLine(startLine);
+    const gate = leewardGateForStartLine(startLine, gateConfig);
     return { x: (gate.portX + gate.starboardX) / 2, y: gate.y };
   }
   return { x: (startLine.pinX + startLine.boatEndX) / 2, y: startLine.y };

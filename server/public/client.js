@@ -5,7 +5,7 @@ import {
   idealTrimAngle, stepBoatKinematics, freshBoatState, normalizeBoatSetup, boatSetupPerformance,
   dist, bearingTo, currentMarkFor, leewardGateForStartLine
 } from "./physics-client.js";
-import { localToLatLon, latLonToPixel, metersPerPixel, bestZoomFor, TILE_SIZE } from "./geo.js";
+import { localToLatLon, latLonToLocal, latLonToPixel, metersPerPixel, bestZoomFor, TILE_SIZE } from "./geo.js";
 
 const TAU = Math.PI * 2;
 const RENDER_DELAY_MS = 150; // buffered-interpolation delay applied to *other* boats
@@ -55,6 +55,7 @@ let raceClock = 0;
 let prestartSeconds = PRESTART_SECONDS;
 let startLine = { pinX: PIN_X, boatEndX: BOAT_END_X, y: START_Y, lengthM: BOAT_END_X - PIN_X };
 let windwardMark = { ...WINDWARD_MARK };
+let gateConfig = { offsetM: -100, widthM: 15, centerX: 0 };
 let lastSnapshotBoats = [];
 const remoteBuffers = {}; // boatIndex -> [{tRecv, worldX, worldY, headingDeg, speedKnots, tackSign, name, color, connected, race}]
 const wakeMap = {}; // boatIndex -> [{x,y,age}]
@@ -281,26 +282,38 @@ const venueMapCoords = document.getElementById("venueMapCoords");
 const venueStatus = document.getElementById("venueStatus");
 const attribution = document.getElementById("attribution");
 let venuePickerMap = null;
-let venueStartMarker = null, venueWindwardMarker = null, venueCourseLine = null;
+let venueStartMarker = null, venueWindwardMarker = null, venueGatePortMarker = null, venueGateStarboardMarker = null, venueCourseLine = null, venueGateLine = null;
 
 function coursePickerState() {
-  if (!venueStartMarker || !venueWindwardMarker) return null;
+  if (!venueStartMarker || !venueWindwardMarker || !venueGatePortMarker || !venueGateStarboardMarker) return null;
   const start = venueStartMarker.getLatLng(), mark = venueWindwardMarker.getLatLng();
   const dLon = (mark.lng - start.lng) * D2R;
   const lat1 = start.lat * D2R, lat2 = mark.lat * D2R;
   const y = Math.sin(dLon) * Math.cos(lat2);
   const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
-  return { start, mark, bearingDeg: wrap360(Math.atan2(y, x) / D2R), lengthM: start.distanceTo(mark) };
+  const bearingDeg = wrap360(Math.atan2(y, x) / D2R);
+  const pickerVenue = { lat: start.lat, lon: start.lng, bearingDeg };
+  const gatePort = venueGatePortMarker.getLatLng(), gateStarboard = venueGateStarboardMarker.getLatLng();
+  const portLocal = latLonToLocal(gatePort.lat, gatePort.lng, pickerVenue);
+  const starboardLocal = latLonToLocal(gateStarboard.lat, gateStarboard.lng, pickerVenue);
+  return {
+    start, mark, bearingDeg, lengthM: start.distanceTo(mark),
+    gateOffsetM: (portLocal.y + starboardLocal.y) / 2,
+    gateWidthM: Math.abs(starboardLocal.x - portLocal.x),
+    gateCenterX: (portLocal.x + starboardLocal.x) / 2
+  };
 }
 
 function updateCoursePicker() {
   const course = coursePickerState();
   if (!course) return;
   venueCourseLine.setLatLngs([course.start, course.mark]);
+  venueGateLine.setLatLngs([venueGatePortMarker.getLatLng(), venueGateStarboardMarker.getLatLng()]);
   venueInput.value = course.start.lat.toFixed(5) + ", " + course.start.lng.toFixed(5);
   venueBearing.value = Math.round(course.bearingDeg);
   venueMapCoords.textContent = "START " + course.start.lat.toFixed(5) + ", " + course.start.lng.toFixed(5)
-    + " · WINDWARD " + Math.round(course.lengthM) + " m @ " + Math.round(course.bearingDeg) + "°T";
+    + " · WINDWARD " + Math.round(course.lengthM) + " m @ " + Math.round(course.bearingDeg) + "°T"
+    + " · GATE " + Math.round(course.gateWidthM) + " m wide / " + Math.round(Math.abs(course.gateOffsetM)) + " m windward";
 }
 
 function updateVenuePickerReadout() {
@@ -322,8 +335,13 @@ function initVenuePicker() {
   }).addTo(venuePickerMap);
   venueStartMarker = window.L.marker([-43.6198028, 172.7193694], { draggable: true, title: "START" }).addTo(venuePickerMap).bindTooltip("START", { permanent: true, direction: "right" });
   venueWindwardMarker = window.L.marker([-43.6154969, 172.7415674], { draggable: true, title: "WINDWARD" }).addTo(venuePickerMap).bindTooltip("WINDWARD", { permanent: true, direction: "right" });
+  const pickerVenue = { lat: -43.6198028, lon: 172.7193694, bearingDeg: 75 };
+  const gatePort = localToLatLon(-7.5, -100, pickerVenue), gateStarboard = localToLatLon(7.5, -100, pickerVenue);
+  venueGatePortMarker = window.L.marker([gatePort.lat, gatePort.lon], { draggable: true, title: "GATE PORT" }).addTo(venuePickerMap).bindTooltip("GATE P", { permanent: true, direction: "left" });
+  venueGateStarboardMarker = window.L.marker([gateStarboard.lat, gateStarboard.lon], { draggable: true, title: "GATE STARBOARD" }).addTo(venuePickerMap).bindTooltip("GATE S", { permanent: true, direction: "right" });
   venueCourseLine = window.L.polyline([venueStartMarker.getLatLng(), venueWindwardMarker.getLatLng()], { color: "#4fc3f7", weight: 3, dashArray: "7 5" }).addTo(venuePickerMap);
-  venueStartMarker.on("drag", updateCoursePicker); venueWindwardMarker.on("drag", updateCoursePicker);
+  venueGateLine = window.L.polyline([venueGatePortMarker.getLatLng(), venueGateStarboardMarker.getLatLng()], { color: "#f0c581", weight: 3, dashArray: "5 4" }).addTo(venuePickerMap);
+  for (const marker of [venueStartMarker, venueWindwardMarker, venueGatePortMarker, venueGateStarboardMarker]) marker.on("drag", updateCoursePicker);
   venuePickerMap.on("move zoom", updateVenuePickerReadout);
   updateVenuePickerReadout();
 }
@@ -339,7 +357,7 @@ function parseLatLon(text) {
   return { lat, lon };
 }
 
-function sendVenue(lat, lon, courseLengthM) {
+function sendVenue(lat, lon, courseLengthM, nextGateConfig) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   // Number("") is 0, which would silently mean "wind from due north" every time
   // the field is left blank — treat empty as "server picks".
@@ -348,7 +366,10 @@ function sendVenue(lat, lon, courseLengthM) {
   ws.send(JSON.stringify({
     t: "venue", lat, lon,
     bearingDeg: Number.isFinite(brg) ? brg : undefined,
-    courseLengthM: Number.isFinite(courseLengthM) ? courseLengthM : undefined
+    courseLengthM: Number.isFinite(courseLengthM) ? courseLengthM : undefined,
+    gateOffsetM: Number.isFinite(nextGateConfig?.offsetM) ? nextGateConfig.offsetM : undefined,
+    gateWidthM: Number.isFinite(nextGateConfig?.widthM) ? nextGateConfig.widthM : undefined,
+    gateCenterX: Number.isFinite(nextGateConfig?.centerX) ? nextGateConfig.centerX : undefined
   }));
 }
 
@@ -365,7 +386,7 @@ if (venueMapApplyBtn) {
     if (!venuePickerMap) { venueStatus.textContent = "map is still loading"; return; }
     const course = coursePickerState();
     venueStatus.textContent = "setting course from map marks…";
-    if (course) sendVenue(course.start.lat, course.start.lng, course.lengthM);
+    if (course) sendVenue(course.start.lat, course.start.lng, course.lengthM, { offsetM: course.gateOffsetM, widthM: course.gateWidthM, centerX: course.gateCenterX });
   });
 }
 if (venueLocateBtn) {
@@ -395,10 +416,15 @@ function applyVenueToUi() {
         venuePickerMap.setView([venue.lat, venue.lon], Math.max(venuePickerMap.getZoom(), 15));
       }
       setTimeout(() => venuePickerMap.invalidateSize(), 0);
-      if (venueStartMarker && venueWindwardMarker) {
+      if (venueStartMarker && venueWindwardMarker && venueGatePortMarker && venueGateStarboardMarker) {
         const markLatLon = localToLatLon(windwardMark.x, windwardMark.y, venue);
+        const gate = leewardGateForStartLine(startLine, gateConfig);
+        const gatePortLatLon = localToLatLon(gate.portX, gate.y, venue);
+        const gateStarboardLatLon = localToLatLon(gate.starboardX, gate.y, venue);
         venueStartMarker.setLatLng([venue.lat, venue.lon]);
         venueWindwardMarker.setLatLng([markLatLon.lat, markLatLon.lon]);
+        venueGatePortMarker.setLatLng([gatePortLatLon.lat, gatePortLatLon.lon]);
+        venueGateStarboardMarker.setLatLng([gateStarboardLatLon.lat, gateStarboardLatLon.lon]);
         updateCoursePicker();
       }
     }
@@ -477,7 +503,7 @@ function updateAutoZoom() {
   if (roomStatus === "lobby" || raceClock < prestartSeconds) {
     points.push({ x: startLine.pinX, y: startLine.y }, { x: startLine.boatEndX, y: startLine.y });
   } else if (myRace.status !== "finished") {
-    points.push(currentMarkFor(myRace.leg, windwardMark, startLine));
+    points.push(currentMarkFor(myRace.leg, windwardMark, startLine, gateConfig));
   }
   let maxDx = 10, maxDy = 10;
   for (const p of points) {
@@ -542,6 +568,7 @@ function onServerMessage(msg) {
     if (msg.setup) writeBoatSetup(msg.setup);
     if (msg.startLine) startLine = msg.startLine;
     if (msg.windwardMark) windwardMark = msg.windwardMark;
+    if (msg.gateConfig) gateConfig = msg.gateConfig;
     applyVenueToUi();
   } else if (msg.t === "roster") {
     roomStatus = msg.roomStatus;
@@ -551,6 +578,7 @@ function onServerMessage(msg) {
     }
     if (msg.startLine) startLine = msg.startLine;
     if (msg.windwardMark) windwardMark = msg.windwardMark;
+    if (msg.gateConfig) gateConfig = msg.gateConfig;
     if (msg.venue !== undefined) { venue = msg.venue; applyVenueToUi(); }
     if (msg.conditions) waterCurrent = msg.conditions;
     if (msg.conditionModel && msg.conditionModel.source !== "manual") {
@@ -614,9 +642,9 @@ function renderRoster(roster, hostId) {
   aiFleetApplyBtn.disabled = !isHost || roomStatus !== "lobby";
   restartRaceBtn.disabled = !isHost || roomStatus === "lobby";
   restartRaceBtn.style.display = isHost && roomStatus !== "lobby" ? "inline-flex" : "none";
-  if (venueStartMarker && venueWindwardMarker) {
+  if (venueStartMarker && venueWindwardMarker && venueGatePortMarker && venueGateStarboardMarker) {
     const canEditCourse = isHost && roomStatus === "lobby";
-    for (const marker of [venueStartMarker, venueWindwardMarker]) canEditCourse ? marker.dragging.enable() : marker.dragging.disable();
+    for (const marker of [venueStartMarker, venueWindwardMarker, venueGatePortMarker, venueGateStarboardMarker]) canEditCourse ? marker.dragging.enable() : marker.dragging.disable();
   }
   if (roomStatus === "lobby") {
     lobby.classList.remove("hide");
@@ -652,6 +680,7 @@ function onSnapshot(msg) {
   roomStatus = msg.roomStatus; raceClock = msg.raceClock;
   if (msg.startLine) startLine = msg.startLine;
   if (msg.windwardMark) windwardMark = msg.windwardMark;
+  if (msg.gateConfig) gateConfig = msg.gateConfig;
   lastSnapshotBoats = msg.boats;
   if (roomStatus !== "lobby" && !isWaiting) lobby.classList.add("hide");
   updateRaceLayout();
@@ -1096,7 +1125,7 @@ function drawWorld(info, dt) {
   wctx.beginPath(); wctx.arc(mSx, mSy, 8 * viewScale, 0, TAU); wctx.stroke();
   wctx.fillStyle = "#dba85a"; wctx.font = "10px 'IBM Plex Mono', monospace"; wctx.textAlign = "center";
   wctx.fillText("WINDWARD · ROUND TWICE", mSx, mSy - 12);
-  const gate = leewardGateForStartLine(startLine);
+  const gate = leewardGateForStartLine(startLine, gateConfig);
   const [gatePortSx, gatePortSy] = toScreen(gate.portX, gate.y);
   const [gateStarboardSx, gateStarboardSy] = toScreen(gate.starboardX, gate.y);
   wctx.strokeStyle = "rgba(79,195,247,0.65)"; wctx.lineWidth = 1.4; wctx.setLineDash([4, 4]);
@@ -1257,7 +1286,7 @@ function updateRaceHud() {
     elRaceClock.textContent = "RACE · " + fmtClock(raceClock - prestartSeconds);
     const legLabels = { 1: "→ windward mark · lap 1/2", 2: "→ leeward gate · lap 1/2", 3: "→ windward mark · lap 2/2", 4: "→ leeward gate · lap 2/2", 5: "→ start / finish line" };
     elRaceLeg.textContent = legLabels[myRace.leg] || "→ next mark";
-    updateMarkPointer(currentMarkFor(myRace.leg, windwardMark, startLine));
+    updateMarkPointer(currentMarkFor(myRace.leg, windwardMark, startLine, gateConfig));
   }
   elOcs.classList.toggle("show", myRace.ocs && raceClock < prestartSeconds);
   elPenalty.classList.toggle("show", myRace.penalty.active || myRace.penalty.pending);

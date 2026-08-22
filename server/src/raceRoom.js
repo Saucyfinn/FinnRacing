@@ -48,6 +48,7 @@ export class RaceRoom {
     this.prestartSeconds = PRESTART_SECONDS;
     this.startLine = startLineForBoatCount(0);
     this.windwardMark = { x: 0, y: -1852 };
+    this.gateConfig = { offsetM: -100, widthM: 15, centerX: 0 };
     this.hostId = null;
     this.restartTimer = 0;
     this.tickHandle = null;
@@ -127,7 +128,7 @@ export class RaceRoom {
       t: "welcome", youId: id, boatIndex: session.boatIndex,
       color: session.boatIndex == null ? "#6b8599" : BOAT_COLORS[session.boatIndex % BOAT_COLORS.length],
       isHost: id === this.hostId, waiting: session.boatIndex == null,
-      maxBoats: MAX_BOATS, venue: this.venue, startLine: this.startLine, windwardMark: this.windwardMark, setup: session.setup
+      maxBoats: MAX_BOATS, venue: this.venue, startLine: this.startLine, windwardMark: this.windwardMark, gateConfig: this.gateConfig, setup: session.setup
     }));
     this.broadcastRoster();
     this.ensureTicking();
@@ -235,6 +236,11 @@ export class RaceRoom {
       };
       const courseLengthM = clamp(Number(msg.courseLengthM) || Math.abs(this.windwardMark.y), 50, 5000);
       this.windwardMark = { x: 0, y: -courseLengthM };
+      this.gateConfig = {
+        offsetM: -clamp(Math.abs(Number(msg.gateOffsetM) || Math.abs(this.gateConfig.offsetM)), 5, 5000),
+        widthM: clamp(Number(msg.gateWidthM) || this.gateConfig.widthM, 5, 200),
+        centerX: clamp(Number(msg.gateCenterX) || 0, -2500, 2500)
+      };
       this.wind.baseDir = 0;
       this.waterCurrent.directionDeg = wrap360(trueCurrentDirection - this.venue.bearingDeg);
       this.waterCurrent.trueDirectionDeg = trueCurrentDirection;
@@ -393,7 +399,7 @@ export class RaceRoom {
       if (markDistance < 35) boat.aiTackHeading = boat.worldX > 0 ? port : starboard;
       this.setAiHeadingWithAvoidance(seat, boat.aiTackHeading);
     } else if (race.leg === 2 || race.leg === 4) {
-      const gate = leewardGateForStartLine(this.startLine);
+      const gate = leewardGateForStartLine(this.startLine, this.gateConfig);
       this.steerAiTo(seat, (gate.portX + gate.starboardX) / 2, gate.y + 10, false);
     } else {
       const finishX = (this.startLine.pinX + this.startLine.boatEndX) / 2;
@@ -532,7 +538,7 @@ export class RaceRoom {
           stepBoatKinematics(boat, this.windForBoat(boat, wind), dt, this.waterCurrent);
           updatePenaltyProgress(boat, rs, dt);
         }
-        stepRace(boat, rs, this.raceClock, dt, this.startLine, this.prestartSeconds, this.windwardMark);
+        stepRace(boat, rs, this.raceClock, dt, this.startLine, this.prestartSeconds, this.windwardMark, this.gateConfig);
       }
       const activeRaces = activeSeats.map(i => this.races[i]);
       stepRules(activeBoats, activeRaces, wind, dt, activeSeats);
@@ -583,7 +589,7 @@ export class RaceRoom {
       id: "ai-" + seat, boatIndex: seat, name: this.names[seat], connected: true, waiting: false, ai: true,
       setup: this.setups[seat], color: BOAT_COLORS[seat % BOAT_COLORS.length]
     });
-    this.broadcast({ t: "roster", roster, hostId: this.hostId, roomStatus: this.roomStatus, venue: this.venue, startLine: this.startLine, windwardMark: this.windwardMark, conditions: this.waterCurrent, conditionModel: this.conditionModel, prestartSeconds: this.prestartSeconds, aiCount: this.aiSeats.size });
+    this.broadcast({ t: "roster", roster, hostId: this.hostId, roomStatus: this.roomStatus, venue: this.venue, startLine: this.startLine, windwardMark: this.windwardMark, gateConfig: this.gateConfig, conditions: this.waterCurrent, conditionModel: this.conditionModel, prestartSeconds: this.prestartSeconds, aiCount: this.aiSeats.size });
   }
 
   broadcastSnapshot(wind, activeSeats) {
@@ -617,7 +623,7 @@ export class RaceRoom {
     });
     this.broadcast({
       t: "snapshot", serverTimeMs: Date.now(), wind: { dir: round2(wind.dir), speed: round2(wind.speed) },
-      roomStatus: this.roomStatus, raceClock: round2(this.raceClock), prestartSeconds: this.prestartSeconds, startLine: this.startLine, windwardMark: this.windwardMark, waterCurrent: this.waterCurrent, conditionModel: this.raceModel || this.conditionModel, boats
+      roomStatus: this.roomStatus, raceClock: round2(this.raceClock), prestartSeconds: this.prestartSeconds, startLine: this.startLine, windwardMark: this.windwardMark, gateConfig: this.gateConfig, waterCurrent: this.waterCurrent, conditionModel: this.raceModel || this.conditionModel, boats
     });
   }
 

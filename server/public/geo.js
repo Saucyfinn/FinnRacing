@@ -40,6 +40,15 @@ export function localToLatLon(worldX, worldY, venue) {
   return northEastToLatLon(north, east, venue.lat, venue.lon);
 }
 
+export function latLonToLocal(lat, lon, venue) {
+  const north = (lat - venue.lat) * M_PER_DEG_LAT;
+  const east = (lon - venue.lon) * M_PER_DEG_LAT * Math.cos(venue.lat * D2R);
+  const b = venue.bearingDeg * D2R;
+  const upwind = north * Math.cos(b) + east * Math.sin(b);
+  const across = -north * Math.sin(b) + east * Math.cos(b);
+  return { x: across, y: -upwind };
+}
+
 // --- Web Mercator ---------------------------------------------------------
 
 export function lonToMercatorX01(lon) { return (lon + 180) / 360; }

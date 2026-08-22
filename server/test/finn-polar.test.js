@@ -19,6 +19,7 @@ import {
   leewardGateForStartLine as clientLeewardGateForStartLine,
   currentMarkFor as clientCurrentMarkFor
 } from "../public/physics-client.js";
+import { localToLatLon, latLonToLocal } from "../public/geo.js";
 
 test("default line and course geometry match the sailing instructions", () => {
   assert.equal(FINN_LENGTH_M, 4.5);
@@ -31,10 +32,21 @@ test("default line and course geometry match the sailing instructions", () => {
   assert.equal(startLineForBoatCount(6).lengthM, 40.5);
   const fourBoatLine = startLineForBoatCount(4);
   const gate = leewardGateForStartLine(fourBoatLine);
-  assert.equal(gate.y, -5);
+  assert.deepEqual(gate, { portX: -7.5, starboardX: 7.5, y: -100 });
   assert.deepEqual(clientLeewardGateForStartLine(fourBoatLine), gate);
-  assert.deepEqual(clientCurrentMarkFor(4, { x: 0, y: -1852 }, fourBoatLine), { x: 0, y: -5 });
+  assert.deepEqual(clientCurrentMarkFor(4, { x: 0, y: -1852 }, fourBoatLine), { x: 0, y: -100 });
   assert.deepEqual(clientCurrentMarkFor(5, { x: 0, y: -1852 }, fourBoatLine), { x: 0, y: 0 });
+  assert.deepEqual(leewardGateForStartLine(fourBoatLine, { offsetM: -175, widthM: 30, centerX: 40 }), { portX: 25, starboardX: 55, y: -175 });
+});
+
+test("draggable map marks round-trip between GPS and course coordinates", () => {
+  const venue = { lat: -43.6198028, lon: 172.7193694, bearingDeg: 75 };
+  for (const mark of [{ x: 0, y: -1852 }, { x: -7.5, y: -100 }, { x: 47.5, y: -175 }]) {
+    const gps = localToLatLon(mark.x, mark.y, venue);
+    const local = latLonToLocal(gps.lat, gps.lon, venue);
+    assert.ok(Math.abs(local.x - mark.x) < 0.000001);
+    assert.ok(Math.abs(local.y - mark.y) < 0.000001);
+  }
 });
 
 test("Finn polar is capped at 5.4 knots at 40 degrees", () => {
@@ -103,8 +115,8 @@ test("default course completes two windward leewards before finishing at the lin
   stepRace(boat, race, 100, 0, undefined, 60, mark);
   assert.equal(race.leg, 2);
 
-  race.prevWorldX = 0; race.prevWorldY = -6;
-  boat.worldY = -4;
+  race.prevWorldX = 0; race.prevWorldY = -101;
+  boat.worldY = -99;
   stepRace(boat, race, 900, 0, undefined, 60, mark);
   assert.equal(race.leg, 3);
 
@@ -112,7 +124,7 @@ test("default course completes two windward leewards before finishing at the lin
   stepRace(boat, race, 1800, 0, undefined, 60, mark);
   assert.equal(race.leg, 4);
 
-  race.prevWorldY = -6; boat.worldY = -4;
+  race.prevWorldY = -101; boat.worldY = -99;
   stepRace(boat, race, 2500, 0, undefined, 60, mark);
   assert.equal(race.leg, 5);
 
