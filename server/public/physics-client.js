@@ -110,15 +110,26 @@ export function boatSetupPerformance(setupValue, twsKnots) {
 }
 
 export const PIN_X = -10, BOAT_END_X = 10, START_Y = 0;
-export const WINDWARD_MARK = { x: 0, y: -150 };
+export const WINDWARD_MARK = { x: 0, y: -1852 };
+export const LEEWARD_GATE_OFFSET_M = 100;
+export const LEEWARD_GATE_WIDTH_M = 20;
 export const PRESTART_SECONDS = 180;
 
 export function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
 export function bearingTo(fromX, fromY, toX, toY) {
   return wrap360(Math.atan2(toX - fromX, -(toY - fromY)) / D2R);
 }
-export function currentMarkFor(leg, windwardMark = WINDWARD_MARK) {
-  return leg === 1 ? windwardMark : { x: (PIN_X + BOAT_END_X) / 2, y: START_Y };
+export function leewardGateForStartLine(startLine) {
+  const centreX = (startLine.pinX + startLine.boatEndX) / 2;
+  return { portX: centreX - LEEWARD_GATE_WIDTH_M / 2, starboardX: centreX + LEEWARD_GATE_WIDTH_M / 2, y: startLine.y + LEEWARD_GATE_OFFSET_M };
+}
+export function currentMarkFor(leg, windwardMark = WINDWARD_MARK, startLine = { pinX: PIN_X, boatEndX: BOAT_END_X, y: START_Y }) {
+  if (leg === 1 || leg === 3) return windwardMark;
+  if (leg === 2) {
+    const gate = leewardGateForStartLine(startLine);
+    return { x: (gate.portX + gate.starboardX) / 2, y: gate.y };
+  }
+  return { x: (startLine.pinX + startLine.boatEndX) / 2, y: startLine.y };
 }
 
 export function idealTrimAngle(twaDeg) { return clamp(twaDeg * 0.5, 6, 80); }

@@ -9,7 +9,7 @@ import {
 
 const BOAT_COLORS = ["#e2ece9", "#6fa9d9", "#f0c581", "#c98bd8", "#7fd1a8", "#e2726f"];
 const RESTART_DELAY_SEC = 6;
-const DEFAULT_VENUE = { lat: -41.285, lon: 174.825, bearingDeg: 340 }; // Wellington Harbour
+const DEFAULT_VENUE = { lat: -43.6105, lon: 172.724, bearingDeg: 75 }; // Lyttelton Harbour
 
 // One RaceRoom Durable Object instance = one race room (fleet of up to
 // MAX_BOATS boats). The room is addressed by a short room code the client
@@ -41,14 +41,14 @@ export class RaceRoom {
     // { lat, lon, bearingDeg } — bearingDeg is the TRUE compass bearing the
     // wind blows FROM, i.e. the direction local -Y points on the real map.
     // Always start on mapped water. A venue embedded in the first room link,
-    // or a host lobby change, replaces this Wellington Harbour default.
+    // or a host lobby change, replaces this Lyttelton Harbour default.
     this.venue = { ...DEFAULT_VENUE };
     this.venueChosenFromLink = false;
     this.roomStatus = "lobby"; // lobby | prestart | racing | finished
     this.raceClock = 0;
     this.prestartSeconds = PRESTART_SECONDS;
     this.startLine = startLineForBoatCount(0);
-    this.windwardMark = { x: 0, y: -150 };
+    this.windwardMark = { x: 0, y: -1852 };
     this.hostId = null;
     this.restartTimer = 0;
     this.tickHandle = null;
@@ -361,7 +361,7 @@ export class RaceRoom {
       return;
     }
     if (race.status === "finished" || race.status === "disqualified") { boat.targetHeadingDeg = boat.headingDeg; return; }
-    if (race.leg === 1) {
+    if (race.leg === 1 || race.leg === 3) {
       const windDir = this.currentWind().dir;
       const starboard = wrap360(windDir + 42), port = wrap360(windDir - 42);
       const markDistance = Math.hypot(boat.worldX - this.windwardMark.x, boat.worldY - this.windwardMark.y);
@@ -372,6 +372,8 @@ export class RaceRoom {
       // than continuing past it on the original boundary rule.
       if (markDistance < 35) boat.aiTackHeading = boat.worldX > 0 ? port : starboard;
       this.setAiHeadingWithAvoidance(seat, boat.aiTackHeading);
+    } else if (race.leg === 2) {
+      this.steerAiTo(seat, (this.startLine.pinX + this.startLine.boatEndX) / 2, this.startLine.y + 105, false);
     } else {
       const finishX = (this.startLine.pinX + this.startLine.boatEndX) / 2;
       this.steerAiTo(seat, finishX, this.startLine.y + 10, false);
@@ -437,7 +439,7 @@ export class RaceRoom {
         }
 
         const pairKey = i + ":" + j;
-        if (ri.status === "racing" && rj.status === "racing" && ri.leg === 1 && rj.leg === 1) {
+        if (ri.status === "racing" && rj.status === "racing" && ri.leg === rj.leg && (ri.leg === 1 || ri.leg === 3)) {
           const di = Math.hypot(bi.worldX - this.windwardMark.x, bi.worldY - this.windwardMark.y);
           const dj = Math.hypot(bj.worldX - this.windwardMark.x, bj.worldY - this.windwardMark.y);
           if (!this.markRoomRights.has(pairKey) && Math.min(di, dj) <= markRoomZone) this.markRoomRights.set(pairKey, di <= dj ? i : j);

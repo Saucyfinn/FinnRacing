@@ -58,10 +58,34 @@ test("custom start sequence controls when a line crossing starts the race", () =
 test("downwind return crossing completes the race", () => {
   const boat = freshBoatState(180);
   const race = freshRaceState();
-  race.status = "racing"; race.leg = 2;
+  race.status = "racing"; race.leg = 4;
   race.prevWorldX = 0; race.prevWorldY = -1;
   boat.worldX = 0; boat.worldY = 1;
   stepRace(boat, race, 200, 0, undefined, 60, { x: 0, y: -250 });
   assert.equal(race.status, "finished");
   assert.equal(race.finishTime, 140);
+});
+
+test("default course requires gate and two windward legs before the downwind finish", () => {
+  const boat = freshBoatState(180);
+  const race = freshRaceState();
+  race.status = "racing";
+  const mark = { x: 0, y: -1852 };
+
+  boat.worldX = 0; boat.worldY = mark.y;
+  stepRace(boat, race, 100, 0, undefined, 60, mark);
+  assert.equal(race.leg, 2);
+
+  race.prevWorldX = 0; race.prevWorldY = 99;
+  boat.worldY = 101;
+  stepRace(boat, race, 900, 0, undefined, 60, mark);
+  assert.equal(race.leg, 3);
+
+  boat.worldY = mark.y;
+  stepRace(boat, race, 1800, 0, undefined, 60, mark);
+  assert.equal(race.leg, 4);
+
+  race.prevWorldY = -1; boat.worldY = 1;
+  stepRace(boat, race, 2600, 0, undefined, 60, mark);
+  assert.equal(race.status, "finished");
 });

@@ -144,7 +144,7 @@ export function boatSetupPerformance(setupValue, twsKnots) {
   };
 }
 
-// ---------- course: windward/leeward, one lap, finish at the start line ----------
+// ---------- course: two windward/leewards with a downwind finish ----------
 export const FINN_LENGTH_M = 4.5;
 // Aerodynamic gameplay constants are grouped for later on-water calibration.
 export const DIRTY_WIND = Object.freeze({
@@ -162,10 +162,13 @@ export const DIRTY_WIND = Object.freeze({
 export const START_LINE_LENGTH_PER_BOAT = 1.5;
 export const MIN_START_LINE_LENGTH_M = 20;
 export const PIN_X = -10, BOAT_END_X = 10, START_Y = 0;
-export const WINDWARD_MARK = { x: 0, y: -150 };
+export const NAUTICAL_MILE_M = 1852;
+export const WINDWARD_MARK = { x: 0, y: -NAUTICAL_MILE_M };
+export const LEEWARD_GATE_OFFSET_M = 100;
+export const LEEWARD_GATE_WIDTH_M = 20;
 export const MARK_RADIUS = 8;
 export const PRESTART_SECONDS = 180;
-export const RACE_TIMEOUT_SECONDS = 240;
+export const RACE_TIMEOUT_SECONDS = 4200;
 
 // ---------- right-of-way rules ----------
 export const INFRINGEMENT_RADIUS = 5;
@@ -192,6 +195,15 @@ export function crossedLine(prevX, prevY, curX, curY, lineY, xMin, xMax) {
 export function startLineForBoatCount(count) {
   const lengthM = Math.max(MIN_START_LINE_LENGTH_M, Math.max(0, count) * FINN_LENGTH_M * START_LINE_LENGTH_PER_BOAT);
   return { pinX: -lengthM / 2, boatEndX: lengthM / 2, y: START_Y, lengthM };
+}
+
+export function leewardGateForStartLine(startLine) {
+  const centreX = (startLine.pinX + startLine.boatEndX) / 2;
+  return {
+    portX: centreX - LEEWARD_GATE_WIDTH_M / 2,
+    starboardX: centreX + LEEWARD_GATE_WIDTH_M / 2,
+    y: startLine.y + LEEWARD_GATE_OFFSET_M
+  };
 }
 
 export function idealTrimAngle(twaDeg) { return clamp(twaDeg * 0.5, 6, 80); }
@@ -401,13 +413,20 @@ export function freshRaceState() {
   };
 }
 
-export function currentMarkFor(rs, windwardMark = WINDWARD_MARK) {
-  return rs.leg === 1 ? windwardMark : { x: (PIN_X + BOAT_END_X) / 2, y: START_Y };
+export function currentMarkFor(rs, windwardMark = WINDWARD_MARK, startLine = { pinX: PIN_X, boatEndX: BOAT_END_X, y: START_Y }) {
+  if (rs.leg === 1 || rs.leg === 3) return windwardMark;
+  if (rs.leg === 2) {
+    const gate = leewardGateForStartLine(startLine);
+    return { x: (gate.portX + gate.starboardX) / 2, y: gate.y };
+  }
+  return { x: (startLine.pinX + startLine.boatEndX) / 2, y: startLine.y };
 }
 
 export function stepRace(s, rs, raceClock, dt, startLine = { pinX: PIN_X, boatEndX: BOAT_END_X, y: START_Y }, prestartSeconds = PRESTART_SECONDS, windwardMark = WINDWARD_MARK) {
   if (rs.status === "finished" || rs.status === "disqualified") { rs.prevWorldX = s.worldX; rs.prevWorldY = s.worldY; return; }
   const crossing = crossedLine(rs.prevWorldX, rs.prevWorldY, s.worldX, s.worldY, startLine.y, Math.min(startLine.pinX, startLine.boatEndX), Math.max(startLine.pinX, startLine.boatEndX));
+  const gate = leewardGateForStartLine(startLine);
+  const gateCrossing = crossedLine(rs.prevWorldX, rs.prevWorldY, s.worldX, s.worldY, gate.y, gate.portX, gate.starboardX);
   const afterStart = raceClock >= prestartSeconds;
 
   if (rs.status === "prestart") {
@@ -420,7 +439,11 @@ export function stepRace(s, rs, raceClock, dt, startLine = { pinX: PIN_X, boatEn
   } else if (rs.status === "racing") {
     if (rs.leg === 1) {
       if (dist(s.worldX, s.worldY, windwardMark.x, windwardMark.y) < MARK_RADIUS) rs.leg = 2;
-    } else if (rs.leg === 2 && crossing === "north-to-south") {
+    } else if (rs.leg === 2 && gateCrossing === "north-to-south") {
+      rs.leg = 3;
+    } else if (rs.leg === 3) {
+      if (dist(s.worldX, s.worldY, windwardMark.x, windwardMark.y) < MARK_RADIUS) rs.leg = 4;
+    } else if (rs.leg === 4 && crossing === "north-to-south") {
       rs.status = "finished";
       rs.finishTime = raceClock - prestartSeconds;
     }

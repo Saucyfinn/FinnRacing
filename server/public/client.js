@@ -3,7 +3,7 @@ import {
   NO_GO_HALF, TRIM_MAX_ERROR, PX_PER_METER,
   PIN_X, BOAT_END_X, START_Y, WINDWARD_MARK, PRESTART_SECONDS,
   idealTrimAngle, stepBoatKinematics, freshBoatState, normalizeBoatSetup, boatSetupPerformance,
-  dist, bearingTo, currentMarkFor
+  dist, bearingTo, currentMarkFor, leewardGateForStartLine
 } from "./physics-client.js";
 import { localToLatLon, latLonToPixel, metersPerPixel, bestZoomFor, TILE_SIZE } from "./geo.js";
 
@@ -320,8 +320,8 @@ function initVenuePicker() {
   window.L.tileLayer("/tiles/{z}/{x}/{y}.webp", {
     minZoom: 5, maxZoom: 20, attribution: "Imagery © LINZ · CC BY 4.0"
   }).addTo(venuePickerMap);
-  venueStartMarker = window.L.marker([-41.001, 172.5], { draggable: true, title: "START" }).addTo(venuePickerMap).bindTooltip("START", { permanent: true, direction: "right" });
-  venueWindwardMarker = window.L.marker([-41.000, 172.5], { draggable: true, title: "WINDWARD" }).addTo(venuePickerMap).bindTooltip("WINDWARD", { permanent: true, direction: "right" });
+  venueStartMarker = window.L.marker([-43.6105, 172.724], { draggable: true, title: "START" }).addTo(venuePickerMap).bindTooltip("START", { permanent: true, direction: "right" });
+  venueWindwardMarker = window.L.marker([-43.6062, 172.7462], { draggable: true, title: "WINDWARD" }).addTo(venuePickerMap).bindTooltip("WINDWARD", { permanent: true, direction: "right" });
   venueCourseLine = window.L.polyline([venueStartMarker.getLatLng(), venueWindwardMarker.getLatLng()], { color: "#4fc3f7", weight: 3, dashArray: "7 5" }).addTo(venuePickerMap);
   venueStartMarker.on("drag", updateCoursePicker); venueWindwardMarker.on("drag", updateCoursePicker);
   venuePickerMap.on("move zoom", updateVenuePickerReadout);
@@ -477,7 +477,7 @@ function updateAutoZoom() {
   if (roomStatus === "lobby" || raceClock < prestartSeconds) {
     points.push({ x: startLine.pinX, y: startLine.y }, { x: startLine.boatEndX, y: startLine.y });
   } else if (myRace.status !== "finished") {
-    points.push(currentMarkFor(myRace.leg, windwardMark));
+    points.push(currentMarkFor(myRace.leg, windwardMark, startLine));
   }
   let maxDx = 10, maxDy = 10;
   for (const p of points) {
@@ -1047,7 +1047,7 @@ function drawWorld(info, dt) {
   wctx.beginPath(); wctx.moveTo(0, 26); wctx.lineTo(-6, 14); wctx.lineTo(6, 14); wctx.closePath(); wctx.fill();
   wctx.restore();
 
-  // start/finish line + windward mark
+  // start/finish line, windward mark, and leeward gate
   const anyOcs = lastSnapshotBoats.some(b => b.race.ocs);
   const [pinSx, pinSy] = toScreen(startLine.pinX, startLine.y);
   const [endSx, endSy] = toScreen(startLine.boatEndX, startLine.y);
@@ -1062,6 +1062,15 @@ function drawWorld(info, dt) {
   wctx.fillStyle = "#dba85a"; wctx.beginPath(); wctx.arc(mSx, mSy, 5, 0, TAU); wctx.fill();
   wctx.strokeStyle = "rgba(219,168,90,0.4)"; wctx.lineWidth = 1;
   wctx.beginPath(); wctx.arc(mSx, mSy, 8 * viewScale, 0, TAU); wctx.stroke();
+  const gate = leewardGateForStartLine(startLine);
+  const [gatePortSx, gatePortSy] = toScreen(gate.portX, gate.y);
+  const [gateStarboardSx, gateStarboardSy] = toScreen(gate.starboardX, gate.y);
+  wctx.strokeStyle = "rgba(79,195,247,0.65)"; wctx.lineWidth = 1.4; wctx.setLineDash([4, 4]);
+  wctx.beginPath(); wctx.moveTo(gatePortSx, gatePortSy); wctx.lineTo(gateStarboardSx, gateStarboardSy); wctx.stroke();
+  wctx.setLineDash([]);
+  [[gatePortSx, gatePortSy], [gateStarboardSx, gateStarboardSy]].forEach(([sx, sy]) => {
+    wctx.fillStyle = "#4fc3f7"; wctx.beginPath(); wctx.arc(sx, sy, 5, 0, TAU); wctx.fill();
+  });
 
   // other boats
   for (const key in remoteBuffers) {
@@ -1211,8 +1220,9 @@ function updateRaceHud() {
     updateMarkPointer({ x: (startLine.pinX + startLine.boatEndX) / 2, y: startLine.y });
   } else {
     elRaceClock.textContent = "RACE · " + fmtClock(raceClock - prestartSeconds);
-    elRaceLeg.textContent = myRace.leg === 1 ? "→ windward mark" : "→ finish";
-    updateMarkPointer(currentMarkFor(myRace.leg, windwardMark));
+    const legLabels = { 1: "→ windward mark · lap 1/2", 2: "→ leeward gate · lap 1/2", 3: "→ windward mark · lap 2/2", 4: "→ downwind finish" };
+    elRaceLeg.textContent = legLabels[myRace.leg] || "→ next mark";
+    updateMarkPointer(currentMarkFor(myRace.leg, windwardMark, startLine));
   }
   elOcs.classList.toggle("show", myRace.ocs && raceClock < prestartSeconds);
   elPenalty.classList.toggle("show", myRace.penalty.active || myRace.penalty.pending);
