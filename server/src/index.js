@@ -9,6 +9,59 @@ const TILE_RE = /^\/tiles\/(\d{1,2})\/(\d{1,7})\/(\d{1,7})\.(png|webp|jpeg)$/;
 const LINZ_TILE_BASE = "https://basemaps.linz.govt.nz/v1/tiles/aerial/3857";
 const TILE_CACHE_SECONDS = 60 * 60 * 24 * 30;
 const DEFAULT_VENUE = { lat: "-41.285", lon: "174.825", brg: "340" };
+const CONDITIONS_CACHE_SECONDS = 10 * 60;
+
+export function interpolateSeries(hourly, fields, nowMs = Date.now()) {
+  const times = hourly.time.map(value => Date.parse(value + (value.endsWith("Z") ? "" : "Z")));
+  let hi = times.findIndex(time => time >= nowMs);
+  if (hi < 0) hi = times.length - 1;
+  const lo = Math.max(0, hi - 1);
+  const span = times[hi] - times[lo];
+  const amount = span > 0 ? Math.max(0, Math.min(1, (nowMs - times[lo]) / span)) : 0;
+  const out = { validTime: new Date(nowMs).toISOString() };
+  for (const field of fields) {
+    const from = Number(hourly[field][lo]), to = Number(hourly[field][hi]);
+    if (field.includes("direction")) {
+      const delta = ((to - from + 540) % 360) - 180;
+      out[field] = (from + delta * amount + 360) % 360;
+    } else out[field] = from + (to - from) * amount;
+  }
+  return out;
+}
+
+async function serveConditions(url) {
+  const lat = Number(url.searchParams.get("lat")), lon = Number(url.searchParams.get("lon"));
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+    return Response.json({ error: "invalid coordinates" }, { status: 400 });
+  }
+  const common = { latitude: lat.toFixed(4), longitude: lon.toFixed(4), timezone: "GMT", past_hours: "1", forecast_hours: "6" };
+  const weatherQuery = new URLSearchParams({ ...common,
+    current: "temperature_2m,weather_code,wind_gusts_10m",
+    hourly: "wind_speed_10m,wind_direction_10m,wind_gusts_10m", wind_speed_unit: "kn"
+  });
+  const marineQuery = new URLSearchParams({ ...common,
+    hourly: "ocean_current_velocity,ocean_current_direction,sea_level_height_msl",
+    wind_speed_unit: "kn", cell_selection: "sea"
+  });
+  const fetchOptions = { cf: { cacheEverything: true, cacheTtl: CONDITIONS_CACHE_SECONDS }, headers: { Accept: "application/json" } };
+  const [weatherResponse, marineResponse] = await Promise.all([
+    fetch("https://api.open-meteo.com/v1/forecast?" + weatherQuery, fetchOptions),
+    fetch("https://marine-api.open-meteo.com/v1/marine?" + marineQuery, fetchOptions)
+  ]);
+  if (!weatherResponse.ok || !marineResponse.ok) return Response.json({ error: "conditions unavailable" }, { status: 502 });
+  const [weather, marine] = await Promise.all([weatherResponse.json(), marineResponse.json()]);
+  const wind = interpolateSeries(weather.hourly, ["wind_speed_10m", "wind_direction_10m", "wind_gusts_10m"]);
+  const tide = interpolateSeries(marine.hourly, ["ocean_current_velocity", "ocean_current_direction", "sea_level_height_msl"]);
+  return Response.json({
+    source: "open-meteo-best-match", fetchedAt: new Date().toISOString(), validTime: wind.validTime,
+    latitude: weather.latitude, longitude: weather.longitude, timezone: weather.timezone,
+    weatherCode: weather.current.weather_code, temperatureC: weather.current.temperature_2m,
+    windSpeedKnots: wind.wind_speed_10m, windDirectionDeg: wind.wind_direction_10m, windGustKnots: wind.wind_gusts_10m,
+    currentSpeedKnots: tide.ocean_current_velocity, currentDirectionDeg: tide.ocean_current_direction,
+    seaLevelM: tide.sea_level_height_msl,
+    notice: "Modelled conditions; marine values are coarse and not for navigation."
+  }, { headers: { "Cache-Control": `public, max-age=${CONDITIONS_CACHE_SECONDS}` } });
+}
 
 // Where LINZ actually has aerial imagery. Outside these boxes it answers 200
 // with a solid pale-grey placeholder rather than 404, so we can't detect the
@@ -97,6 +150,7 @@ export default {
     if (url.pathname === "/api/config") {
       return Response.json({ imagery: env.LINZ_API_KEY ? "linz" : "none" });
     }
+    if (url.pathname === "/api/conditions") return serveConditions(url);
 
     if (env.ASSETS) return env.ASSETS.fetch(request);
     return new Response("not found", { status: 404 });

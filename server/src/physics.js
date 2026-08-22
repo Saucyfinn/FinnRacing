@@ -333,7 +333,7 @@ export function freshBoatState(headingDeg, setup = DEFAULT_BOAT_SETUP) {
   };
 }
 
-export function stepBoatKinematics(s, wind, dt) {
+export function stepBoatKinematics(s, wind, dt, waterCurrent = null) {
   const twaSigned = wrap180(wind.dir - s.headingDeg);
   const absTwa = Math.abs(twaSigned);
   const setupEffect = boatSetupPerformance(s.setup, wind.speed);
@@ -379,6 +379,12 @@ export function stepBoatKinematics(s, wind, dt) {
   const hr = s.headingDeg * D2R;
   s.worldX += Math.sin(hr) * mps * dt;
   s.worldY += -Math.cos(hr) * mps * dt;
+  if (waterCurrent && waterCurrent.speedKnots > 0) {
+    const currentMps = waterCurrent.speedKnots * MPS_PER_KNOT;
+    const currentRad = wrap360(waterCurrent.directionDeg) * D2R;
+    s.worldX += Math.sin(currentRad) * currentMps * dt;
+    s.worldY += -Math.cos(currentRad) * currentMps * dt;
+  }
 
   const drifting = s.speedKnots <= 0.05;
   return { twaSigned, absTwa, inNoGo: pinching, drifting, setupEffect };
@@ -395,10 +401,10 @@ export function currentMarkFor(rs) {
   return rs.leg === 1 ? WINDWARD_MARK : { x: (PIN_X + BOAT_END_X) / 2, y: START_Y };
 }
 
-export function stepRace(s, rs, raceClock, dt, startLine = { pinX: PIN_X, boatEndX: BOAT_END_X, y: START_Y }) {
+export function stepRace(s, rs, raceClock, dt, startLine = { pinX: PIN_X, boatEndX: BOAT_END_X, y: START_Y }, prestartSeconds = PRESTART_SECONDS) {
   if (rs.status === "finished") { rs.prevWorldX = s.worldX; rs.prevWorldY = s.worldY; return; }
   const crossing = crossedLine(rs.prevWorldX, rs.prevWorldY, s.worldX, s.worldY, startLine.y, Math.min(startLine.pinX, startLine.boatEndX), Math.max(startLine.pinX, startLine.boatEndX));
-  const afterStart = raceClock >= PRESTART_SECONDS;
+  const afterStart = raceClock >= prestartSeconds;
 
   if (rs.status === "prestart") {
     if (crossing === "south-to-north") {
@@ -412,7 +418,7 @@ export function stepRace(s, rs, raceClock, dt, startLine = { pinX: PIN_X, boatEn
       if (dist(s.worldX, s.worldY, WINDWARD_MARK.x, WINDWARD_MARK.y) < MARK_RADIUS) rs.leg = 2;
     } else if (rs.leg === 2 && crossing === "south-to-north") {
       rs.status = "finished";
-      rs.finishTime = raceClock - PRESTART_SECONDS;
+      rs.finishTime = raceClock - prestartSeconds;
     }
   }
   rs.prevWorldX = s.worldX; rs.prevWorldY = s.worldY;

@@ -4,8 +4,10 @@ import assert from "node:assert/strict";
 import {
   FINN_CLOSE_HAULED_MAX_KNOTS,
   freshBoatState,
+  freshRaceState,
   polarSpeed,
-  stepBoatKinematics
+  stepBoatKinematics,
+  stepRace
 } from "../src/physics.js";
 
 test("Finn polar is capped at 5.4 knots at 40 degrees", () => {
@@ -27,4 +29,28 @@ test("optimized boat setup cannot exceed the 40-degree hull-speed cap", () => {
 
   stepBoatKinematics(boat, { dir: 0, speed: 25 }, 1);
   assert.equal(boat.speedKnots, FINN_CLOSE_HAULED_MAX_KNOTS);
+});
+
+test("tidal current changes ground track without changing speed through water", () => {
+  const stillWater = freshBoatState(90);
+  const tide = freshBoatState(90);
+  stepBoatKinematics(stillWater, { dir: 0, speed: 12 }, 1);
+  stepBoatKinematics(tide, { dir: 0, speed: 12 }, 1, { speedKnots: 2, directionDeg: 90 });
+
+  assert.equal(tide.speedKnots, stillWater.speedKnots);
+  assert.ok(Math.abs((tide.worldX - stillWater.worldX) - 2 * 0.5144) < 1e-9);
+  assert.ok(Math.abs(tide.worldY - stillWater.worldY) < 1e-9);
+});
+
+test("custom start sequence controls when a line crossing starts the race", () => {
+  const boat = freshBoatState(0);
+  const race = freshRaceState();
+  boat.worldX = 0; boat.worldY = -1;
+  race.prevWorldX = 0; race.prevWorldY = 1;
+  stepRace(boat, race, 59, 0, undefined, 60);
+  assert.equal(race.status, "prestart");
+
+  race.prevWorldY = 1;
+  stepRace(boat, race, 60, 0, undefined, 60);
+  assert.equal(race.status, "racing");
 });

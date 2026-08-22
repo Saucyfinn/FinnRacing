@@ -37,6 +37,20 @@ the light, medium, and heavy-air tables in FinnSailAnalyzer. The four named
 sail profiles and skipper-weight trade-offs are explicit gameplay calibration
 data because those exact measurements are not present in the Analyzer.
 
+### Race conditions model
+
+`GET /api/conditions?lat=…&lon=…` fetches and normalizes Open-Meteo weather
+and marine forecasts on the Worker. Upstream responses are edge-cached for ten
+minutes and hourly values are interpolated to the request time. The host may
+use the model unchanged, adjust its values, or enter conditions manually.
+
+When the start sequence begins, the room freezes the provider metadata and a
+deterministic seed. The server derives smooth race-scale pressure and direction
+patches from the forecast mean and gust range. Every boat, including AI, uses
+the same authoritative model. Marine current is applied as ground-track drift;
+boat speed remains speed through water. Marine values are coarse model output
+and must not be used for navigation.
+
 ## Deploy
 
 Run these from your own machine (or from Claude Code in a terminal) — this

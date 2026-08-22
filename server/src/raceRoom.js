@@ -1,6 +1,6 @@
 import {
   MAX_BOATS, TICK_MS, D2R,
-  clamp, wrap360,
+  clamp, wrap360, bearingTo,
   windAt, freshBoatState, stepBoatKinematics, stepFleetDirtyWind, effectiveWindForBoat,
   normalizeBoatSetup,
   freshRaceState, stepRace, stepRules, applyPenaltyOverride, updatePenaltyProgress,
@@ -25,12 +25,16 @@ export class RaceRoom {
     this.connected = [];       // boolean per seat
     this.names = [];
     this.setups = [];
+    this.aiSeats = new Set();
     // baseDir is 0 by design: the whole simulation runs in a COURSE-LOCAL frame
     // where -Y is always dead upwind, which is what keeps WINDWARD_MARK an
     // actual beat and the start line square to the breeze. Where that course
     // sits on the planet, and which way it points, is `venue` below — applied
     // only when projecting to lat/lon for the map. The physics never sees it.
     this.wind = { baseDir: 0, baseSpeed: 10 + Math.random() * 8, t: 0 };
+    this.waterCurrent = { speedKnots: 0, directionDeg: 0, seaLevelM: null, source: "manual" };
+    this.conditionModel = { source: "manual", validTime: null, gustKnots: null, seed: 1 };
+    this.raceModel = null;
     // { lat, lon, bearingDeg } — bearingDeg is the TRUE compass bearing the
     // wind blows FROM, i.e. the direction local -Y points on the real map.
     // Always start on mapped water. A venue embedded in the first room link,
@@ -39,6 +43,7 @@ export class RaceRoom {
     this.venueChosenFromLink = false;
     this.roomStatus = "lobby"; // lobby | prestart | racing | finished
     this.raceClock = 0;
+    this.prestartSeconds = PRESTART_SECONDS;
     this.startLine = startLineForBoatCount(0);
     this.hostId = null;
     this.restartTimer = 0;
@@ -148,6 +153,41 @@ export class RaceRoom {
       this.broadcastRoster();
       return;
     }
+    if (msg.t === "conditions") {
+      if (this.roomStatus !== "lobby" || session.id !== this.hostId) return;
+      const windSpeed = Number(msg.windSpeedKnots), windDir = Number(msg.windDirectionDeg);
+      const currentSpeed = Number(msg.currentSpeedKnots), currentDir = Number(msg.currentDirectionDeg);
+      if (![windSpeed, windDir, currentSpeed, currentDir].every(Number.isFinite)) return;
+      this.wind.baseSpeed = clamp(windSpeed, 2, 30);
+      // The simulation is course-local: 0° is always toward the windward mark.
+      // Store the selected true wind as the venue bearing and rotate the true
+      // current into that local frame before applying drift.
+      this.wind.baseDir = 0;
+      if (this.venue) this.venue.bearingDeg = wrap360(windDir);
+      this.wind.t = 0;
+      this.waterCurrent = {
+        speedKnots: clamp(currentSpeed, 0, 6), directionDeg: wrap360(currentDir - windDir), trueDirectionDeg: wrap360(currentDir),
+        seaLevelM: msg.seaLevelM !== null && msg.seaLevelM !== "" && Number.isFinite(Number(msg.seaLevelM))
+          ? clamp(Number(msg.seaLevelM), -5, 5) : null,
+        source: msg.source === "public" ? "public" : "manual"
+      };
+      const seedText = String(msg.modelValidTime || "manual") + ":" + windSpeed + ":" + windDir + ":" + currentSpeed + ":" + currentDir;
+      this.conditionModel = {
+        source: msg.source === "public" ? String(msg.modelSource || "public") : "manual",
+        validTime: msg.source === "public" ? String(msg.modelValidTime || "") : null,
+        fetchedAt: msg.source === "public" ? String(msg.fetchedAt || "") : null,
+        gustKnots: Number.isFinite(Number(msg.windGustKnots)) ? clamp(Number(msg.windGustKnots), this.wind.baseSpeed, 45) : this.wind.baseSpeed,
+        seed: hashString(seedText)
+      };
+      this.prestartSeconds = clamp(Math.round(Number(msg.prestartSeconds) || PRESTART_SECONDS), 30, 600);
+      this.broadcastRoster();
+      return;
+    }
+    if (msg.t === "ai_fleet") {
+      if (this.roomStatus !== "lobby" || session.id !== this.hostId) return;
+      this.setAiCount(clamp(Math.round(Number(msg.count) || 0), 0, MAX_BOATS - 1));
+      return;
+    }
 
     const boat = session.boatIndex == null ? null : this.boats[session.boatIndex];
     const race = session.boatIndex == null ? null : this.races[session.boatIndex];
@@ -218,8 +258,9 @@ export class RaceRoom {
       this.races[seat] = rs;
     });
     this.raceClock = 0;
+    this.raceModel = { ...this.conditionModel };
     this.roomStatus = "prestart";
-    this.broadcast({ t: "start_countdown", prestartSeconds: PRESTART_SECONDS });
+    this.broadcast({ t: "start_countdown", prestartSeconds: this.prestartSeconds });
     this.broadcastRoster();
   }
 
@@ -242,6 +283,69 @@ export class RaceRoom {
       this.startLine = startLineForBoatCount(entered);
     }
     return true;
+  }
+
+  setAiCount(requestedCount) {
+    while (this.aiSeats.size > requestedCount) {
+      const seat = [...this.aiSeats].pop();
+      this.aiSeats.delete(seat);
+      this.connected[seat] = false;
+      this.boats[seat] = null; this.races[seat] = null; this.names[seat] = null; this.setups[seat] = null;
+    }
+    while (this.aiSeats.size < requestedCount) {
+      const seat = this.freeSeat();
+      if (seat === -1) break;
+      const spawn = spawnPositions(seat + 1, this.currentWind())[seat];
+      const setup = normalizeBoatSetup({ skipperWeightKg: 95, sailChoice: "GS1", mastPositionMm: 53, rigTensionKg: 35 });
+      const boat = freshBoatState(spawn.headingDeg, setup);
+      boat.worldX = spawn.x; boat.worldY = spawn.y;
+      this.boats[seat] = boat; this.races[seat] = freshRaceState();
+      this.races[seat].prevWorldX = spawn.x; this.races[seat].prevWorldY = spawn.y;
+      this.connected[seat] = true; this.names[seat] = "AI Finn " + (this.aiSeats.size + 1); this.setups[seat] = setup;
+      this.aiSeats.add(seat);
+    }
+    this.startLine = startLineForBoatCount(this.connected.filter(Boolean).length);
+    this.promoteWaiting();
+    this.broadcastRoster();
+  }
+
+  steerAi(seat) {
+    const boat = this.boats[seat], race = this.races[seat];
+    if (!boat || !race || race.penalty.active) return;
+    boat.autoTrim = true;
+    if (this.roomStatus === "lobby") {
+      boat.targetHeadingDeg = boat.worldX > 12 ? 270 : (boat.worldX < -12 ? 90 : boat.targetHeadingDeg);
+      return;
+    }
+    if (race.status === "prestart") {
+      const remaining = this.prestartSeconds - this.raceClock;
+      boat.targetHeadingDeg = remaining <= 8 ? 0 : (boat.worldX > 10 ? 270 : 90);
+      return;
+    }
+    if (race.status === "finished") { boat.targetHeadingDeg = boat.headingDeg; return; }
+    if (race.leg === 1) {
+      if (boat.worldX > 12) boat.aiTackHeading = 320;
+      else if (boat.worldX < -12) boat.aiTackHeading = 40;
+      else if (!Number.isFinite(boat.aiTackHeading)) boat.aiTackHeading = seat % 2 ? 40 : 320;
+      boat.targetHeadingDeg = boat.aiTackHeading;
+    } else {
+      boat.targetHeadingDeg = bearingTo(boat.worldX, boat.worldY, (this.startLine.pinX + this.startLine.boatEndX) / 2, this.startLine.y + 4);
+    }
+  }
+
+  windForBoat(boat, centreWind) {
+    const model = this.raceModel || this.conditionModel;
+    const gustRange = clamp((model.gustKnots || centreWind.speed) - centreWind.speed, 0, 12);
+    const phase = (model.seed || 1) * 0.0001;
+    const patch = Math.sin(this.wind.t * 0.055 + boat.worldX * 0.032 + boat.worldY * 0.017 + phase);
+    const ripple = Math.sin(this.wind.t * 0.14 - boat.worldX * 0.019 + boat.worldY * 0.027 + phase * 1.7);
+    const local = {
+      speed: clamp(centreWind.speed + Math.max(0, gustRange) * (patch * 0.32 + ripple * 0.12), 2, 30),
+      dir: wrap360(centreWind.dir + patch * 4 + ripple * 1.5)
+    };
+    const dirty = boat.dirtyWind;
+    if (!dirty) return local;
+    return { speed: Math.max(2, local.speed - dirty.speedDeficitKnots), dir: wrap360(local.dir + dirty.directionShiftDeg) };
   }
 
   promoteWaiting() {
@@ -269,11 +373,12 @@ export class RaceRoom {
 
     const activeSeats = [];
     for (let i = 0; i < MAX_BOATS; i++) if (this.boats[i]) activeSeats.push(i);
+    for (const seat of this.aiSeats) this.steerAi(seat);
 
     if (this.roomStatus === "lobby") {
       const activeBoats = activeSeats.map(i => this.boats[i]);
       stepFleetDirtyWind(activeBoats, wind, dt, activeSeats);
-      for (const i of activeSeats) stepBoatKinematics(this.boats[i], effectiveWindForBoat(this.boats[i], wind), dt);
+      for (const i of activeSeats) stepBoatKinematics(this.boats[i], this.windForBoat(this.boats[i], wind), dt, this.waterCurrent);
     } else {
       this.raceClock += dt;
       const activeBoats = activeSeats.map(i => this.boats[i]);
@@ -281,9 +386,9 @@ export class RaceRoom {
       for (const i of activeSeats) {
         const boat = this.boats[i], rs = this.races[i];
         applyPenaltyOverride(boat, rs);
-        stepBoatKinematics(boat, effectiveWindForBoat(boat, wind), dt);
+        stepBoatKinematics(boat, this.windForBoat(boat, wind), dt, this.waterCurrent);
         updatePenaltyProgress(boat, rs, dt);
-        stepRace(boat, rs, this.raceClock, dt, this.startLine);
+        stepRace(boat, rs, this.raceClock, dt, this.startLine, this.prestartSeconds);
       }
       const activeRaces = activeSeats.map(i => this.races[i]);
       stepRules(activeBoats, activeRaces, wind, dt);
@@ -292,7 +397,7 @@ export class RaceRoom {
         const anyRacing = activeSeats.some(i => this.races[i].status === "racing");
         if (anyRacing) this.roomStatus = "racing";
         const allDone = activeSeats.length > 0 && activeSeats.every(i => this.races[i].status === "finished");
-        const timedOut = this.raceClock > PRESTART_SECONDS + RACE_TIMEOUT_SECONDS;
+        const timedOut = this.raceClock > this.prestartSeconds + RACE_TIMEOUT_SECONDS;
         if (allDone || timedOut) {
           this.roomStatus = "finished";
           this.restartTimer = RESTART_DELAY_SEC;
@@ -329,18 +434,23 @@ export class RaceRoom {
       setup: session.setup,
       color: session.boatIndex == null ? "#6b8599" : BOAT_COLORS[session.boatIndex % BOAT_COLORS.length]
     }));
-    this.broadcast({ t: "roster", roster, hostId: this.hostId, roomStatus: this.roomStatus, venue: this.venue, startLine: this.startLine });
+    for (const seat of this.aiSeats) roster.push({
+      id: "ai-" + seat, boatIndex: seat, name: this.names[seat], connected: true, waiting: false, ai: true,
+      setup: this.setups[seat], color: BOAT_COLORS[seat % BOAT_COLORS.length]
+    });
+    this.broadcast({ t: "roster", roster, hostId: this.hostId, roomStatus: this.roomStatus, venue: this.venue, startLine: this.startLine, conditions: this.waterCurrent, conditionModel: this.conditionModel, prestartSeconds: this.prestartSeconds, aiCount: this.aiSeats.size });
   }
 
   broadcastSnapshot(wind, activeSeats) {
     const boats = activeSeats.map(i => {
       const b = this.boats[i], r = this.races[i];
       return {
-        boatIndex: i, name: this.names[i], color: BOAT_COLORS[i % BOAT_COLORS.length], connected: !!this.connected[i],
+        boatIndex: i, name: this.names[i], color: BOAT_COLORS[i % BOAT_COLORS.length], connected: !!this.connected[i], ai: this.aiSeats.has(i),
         worldX: round2(b.worldX), worldY: round2(b.worldY), headingDeg: round2(b.headingDeg),
         speedKnots: round2(b.speedKnots), tackSign: b.tackSign, autoTrim: b.autoTrim,
         trimAngleDeg: round2(b.trimAngleDeg), trimEfficiency01: round2(b.trimEfficiency01),
         setup: b.setup,
+        sailingWind: this.windForBoat(b, wind),
         setupEffect: {
           speedMultiplier: round3(b.setupEffect.speedMultiplier), accelerationMultiplier: round3(b.setupEffect.accelerationMultiplier),
           pointingPenaltyDeg: round2(b.setupEffect.pointingPenaltyDeg), rigMatch01: round3(b.setupEffect.rigMatch01),
@@ -360,7 +470,7 @@ export class RaceRoom {
     });
     this.broadcast({
       t: "snapshot", serverTimeMs: Date.now(), wind: { dir: round2(wind.dir), speed: round2(wind.speed) },
-      roomStatus: this.roomStatus, raceClock: round2(this.raceClock), startLine: this.startLine, boats
+      roomStatus: this.roomStatus, raceClock: round2(this.raceClock), prestartSeconds: this.prestartSeconds, startLine: this.startLine, waterCurrent: this.waterCurrent, conditionModel: this.raceModel || this.conditionModel, boats
     });
   }
 
@@ -374,3 +484,8 @@ export class RaceRoom {
 
 function round2(n) { return Math.round(n * 100) / 100; }
 function round3(n) { return Math.round(n * 1000) / 1000; }
+function hashString(value) {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) { hash ^= value.charCodeAt(i); hash = Math.imul(hash, 16777619); }
+  return hash >>> 0;
+}

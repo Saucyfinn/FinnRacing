@@ -45,9 +45,12 @@ let authoritative = null;
 const myBoat = freshBoatState(0);
 let myRace = { status: "prestart", leg: 1, ocs: false, finishTime: null, place: null, penalty: { active: false, turnedDeg: 0, rule: null } };
 let wind = { dir: 0, speed: 10 };
+let waterCurrent = { speedKnots: 0, directionDeg: 0, seaLevelM: null, source: "manual" };
 let myDirtyWind = { type: "clean", sourceBoatIndex: null, exposure01: 0, speedDeficitKnots: 0, directionShiftDeg: 0, effectiveSpeed: 10, effectiveDir: 0 };
+let mySailingWind = null;
 let roomStatus = "lobby";
 let raceClock = 0;
+let prestartSeconds = PRESTART_SECONDS;
 let startLine = { pinX: PIN_X, boatEndX: BOAT_END_X, y: START_Y, lengthM: BOAT_END_X - PIN_X };
 let lastSnapshotBoats = [];
 const remoteBuffers = {}; // boatIndex -> [{tRecv, worldX, worldY, headingDeg, speedKnots, tackSign, name, color, connected, race}]
@@ -66,6 +69,8 @@ const lobbyStatus = document.getElementById("lobbyStatus");
 const startBtn = document.getElementById("startBtn");
 const lobby = document.getElementById("lobby");
 const connDot = document.getElementById("connDot");
+const aiOpponentCount = document.getElementById("aiOpponentCount");
+const aiFleetApplyBtn = document.getElementById("aiFleetApplyBtn");
 const skipperWeightInput = document.getElementById("skipperWeight");
 const sailChoiceInput = document.getElementById("sailChoice");
 const mastPositionInput = document.getElementById("mastPosition");
@@ -73,6 +78,118 @@ const rigTensionInput = document.getElementById("rigTension");
 const mastPositionValue = document.getElementById("mastPositionValue");
 const rigTensionValue = document.getElementById("rigTensionValue");
 const setupHint = document.getElementById("setupHint");
+const weatherCondition = document.getElementById("weatherCondition");
+const weatherTemp = document.getElementById("weatherTemp");
+const weatherWind = document.getElementById("weatherWind");
+const weatherGameWind = document.getElementById("weatherGameWind");
+const weatherMeta = document.getElementById("weatherMeta");
+let weatherRequestKey = "", weatherLoadedAt = 0;
+let publicConditions = null;
+const conditionsMode = document.getElementById("conditionsMode");
+const conditionWindSpeed = document.getElementById("conditionWindSpeed");
+const conditionWindDirection = document.getElementById("conditionWindDirection");
+const conditionCurrentSpeed = document.getElementById("conditionCurrentSpeed");
+const conditionCurrentDirection = document.getElementById("conditionCurrentDirection");
+const conditionsApplyBtn = document.getElementById("conditionsApplyBtn");
+const conditionsHint = document.getElementById("conditionsHint");
+const prestartSecondsInput = document.getElementById("prestartSeconds");
+const startSequenceDisplay = document.getElementById("startSequenceDisplay");
+
+function compassPoint(degrees) {
+  return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(wrap360(degrees) / 45) % 8];
+}
+function weatherCodeLabel(code) {
+  if (code === 0) return "Clear";
+  if (code <= 3) return "Partly cloudy";
+  if (code === 45 || code === 48) return "Fog";
+  if (code >= 51 && code <= 57) return "Drizzle";
+  if (code >= 61 && code <= 67) return "Rain";
+  if (code >= 71 && code <= 77) return "Snow";
+  if (code >= 80 && code <= 82) return "Rain showers";
+  if (code >= 85 && code <= 86) return "Snow showers";
+  if (code >= 95) return "Thunderstorms";
+  return "Unknown";
+}
+function updateGameWindCondition() {
+  const trueWind = wrap360(wind.dir + (venue ? venue.bearingDeg : 0));
+  const trueCurrent = Number.isFinite(waterCurrent.trueDirectionDeg)
+    ? waterCurrent.trueDirectionDeg : wrap360(waterCurrent.directionDeg + (venue ? venue.bearingDeg : 0));
+  weatherGameWind.textContent = wind.speed.toFixed(1) + " kt from " + Math.round(trueWind) + "° · current "
+    + waterCurrent.speedKnots.toFixed(1) + " kt toward " + Math.round(trueCurrent) + "°";
+}
+async function loadCurrentWeather(force = false) {
+  if (!venue) return;
+  const key = venue.lat.toFixed(3) + "," + venue.lon.toFixed(3);
+  if (!force && key === weatherRequestKey && Date.now() - weatherLoadedAt < 10 * 60 * 1000) return;
+  weatherRequestKey = key;
+  weatherCondition.textContent = "Loading…";
+  weatherMeta.textContent = "Retrieving current conditions for " + venue.lat.toFixed(3) + ", " + venue.lon.toFixed(3) + "…";
+  try {
+    const response = await fetch("/api/conditions?lat=" + encodeURIComponent(venue.lat) + "&lon=" + encodeURIComponent(venue.lon));
+    if (!response.ok) throw new Error("conditions unavailable");
+    const data = await response.json();
+    if (key !== weatherRequestKey) return;
+    publicConditions = {
+      windSpeedKnots: Number(data.windSpeedKnots), windDirectionDeg: Number(data.windDirectionDeg),
+      windGustKnots: Number(data.windGustKnots), currentSpeedKnots: Number(data.currentSpeedKnots),
+      currentDirectionDeg: Number(data.currentDirectionDeg), seaLevelM: Number(data.seaLevelM),
+      modelSource: data.source, modelValidTime: data.validTime, fetchedAt: data.fetchedAt
+    };
+    weatherCondition.textContent = weatherCodeLabel(data.weatherCode);
+    weatherTemp.textContent = Number(data.temperatureC).toFixed(1) + " °C";
+    weatherWind.textContent = publicConditions.windSpeedKnots.toFixed(1) + " kt from "
+      + Math.round(publicConditions.windDirectionDeg) + "° " + compassPoint(publicConditions.windDirectionDeg)
+      + " · gust " + publicConditions.windGustKnots.toFixed(1) + " kt";
+    weatherMeta.textContent = "Interpolated forecast · valid "
+      + new Date(data.validTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    if (conditionsMode.value === "public") populateConditionInputs(publicConditions);
+    conditionsHint.textContent = "Public tide/current: " + publicConditions.currentSpeedKnots.toFixed(1) + " kt toward "
+      + Math.round(publicConditions.currentDirectionDeg) + "° · sea level " + publicConditions.seaLevelM.toFixed(2)
+      + " m MSL. Coarse model; not for navigation.";
+    weatherLoadedAt = Date.now();
+  } catch {
+    if (key !== weatherRequestKey) return;
+    weatherCondition.textContent = "Unavailable";
+    weatherTemp.textContent = "—";
+    weatherWind.textContent = "—";
+    weatherMeta.textContent = "Current weather could not be loaded. Game wind remains available.";
+    publicConditions = null;
+    weatherLoadedAt = 0;
+  }
+}
+
+function populateConditionInputs(value) {
+  conditionWindSpeed.value = Number(value.windSpeedKnots).toFixed(1);
+  conditionWindDirection.value = Math.round(value.windDirectionDeg);
+  conditionCurrentSpeed.value = Number(value.currentSpeedKnots).toFixed(1);
+  conditionCurrentDirection.value = Math.round(value.currentDirectionDeg);
+}
+function updateConditionsMode() {
+  const usePublic = conditionsMode.value === "public";
+  for (const input of [conditionWindSpeed, conditionWindDirection, conditionCurrentSpeed, conditionCurrentDirection]) input.disabled = usePublic;
+  conditionsApplyBtn.textContent = conditionsMode.value === "manual" ? "APPLY MANUAL CONDITIONS + START TIME" : "APPLY MODEL CONDITIONS + START TIME";
+  if (conditionsMode.value !== "manual" && publicConditions) populateConditionInputs(publicConditions);
+}
+conditionsMode.addEventListener("change", updateConditionsMode);
+prestartSecondsInput.addEventListener("change", () => { startSequenceDisplay.textContent = fmtClock(Number(prestartSecondsInput.value)); });
+conditionsApplyBtn.addEventListener("click", () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !isHost || roomStatus !== "lobby") return;
+  const selected = conditionsMode.value === "public" ? publicConditions : {
+    windSpeedKnots: Number(conditionWindSpeed.value), windDirectionDeg: Number(conditionWindDirection.value),
+    currentSpeedKnots: Number(conditionCurrentSpeed.value), currentDirectionDeg: Number(conditionCurrentDirection.value),
+    seaLevelM: conditionsMode.value === "public_adjusted" && publicConditions ? publicConditions.seaLevelM : null,
+    ...(conditionsMode.value === "public_adjusted" && publicConditions ? {
+      windGustKnots: publicConditions.windGustKnots, modelSource: publicConditions.modelSource,
+      modelValidTime: publicConditions.modelValidTime, fetchedAt: publicConditions.fetchedAt
+    } : {})
+  };
+  if (!selected || ![selected.windSpeedKnots, selected.windDirectionDeg, selected.currentSpeedKnots, selected.currentDirectionDeg].every(Number.isFinite)) {
+    conditionsHint.textContent = "Conditions are not available yet or contain invalid values."; return;
+  }
+  ws.send(JSON.stringify({ t: "conditions", source: conditionsMode.value.startsWith("public") ? "public" : "manual", prestartSeconds: Number(prestartSecondsInput.value), ...selected }));
+  conditionsHint.textContent = (conditionsMode.value.startsWith("public") ? "Model" : "Manual") + " conditions sent to the room.";
+});
+updateConditionsMode();
 
 function readBoatSetup() {
   return normalizeBoatSetup({
@@ -137,6 +254,11 @@ copyLinkBtn.addEventListener("click", async () => {
 });
 startBtn.addEventListener("click", () => {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "start" }));
+});
+aiFleetApplyBtn.addEventListener("click", () => {
+  if (ws && ws.readyState === WebSocket.OPEN && isHost && roomStatus === "lobby") {
+    ws.send(JSON.stringify({ t: "ai_fleet", count: Number(aiOpponentCount.value) }));
+  }
 });
 
 function setConnDot(ok) { connDot.classList.toggle("bad", !ok); }
@@ -250,6 +372,7 @@ function applyVenueToUi() {
     p.set("brg", String(Math.round(venue.bearingDeg)));
     history.replaceState(null, "", location.pathname + "?" + p.toString());
     linkInput.value = location.href;
+    loadCurrentWeather();
   } else {
     venueStatus.textContent = "open water — set a position to race on the real map";
   }
@@ -310,7 +433,7 @@ function updateAutoZoom() {
   const points = lastSnapshotBoats
     .filter(b => b.connected)
     .map(b => ({ x: b.worldX, y: b.worldY }));
-  if (roomStatus === "lobby" || raceClock < PRESTART_SECONDS) {
+  if (roomStatus === "lobby" || raceClock < prestartSeconds) {
     points.push({ x: startLine.pinX, y: startLine.y }, { x: startLine.boatEndX, y: startLine.y });
   } else if (myRace.status !== "finished") {
     points.push(currentMarkFor(myRace.leg));
@@ -379,10 +502,22 @@ function onServerMessage(msg) {
     applyVenueToUi();
   } else if (msg.t === "roster") {
     roomStatus = msg.roomStatus;
+    if (msg.prestartSeconds) {
+      prestartSeconds = msg.prestartSeconds; prestartSecondsInput.value = String(prestartSeconds);
+      startSequenceDisplay.textContent = fmtClock(prestartSeconds);
+    }
     if (msg.startLine) startLine = msg.startLine;
     if (msg.venue !== undefined) { venue = msg.venue; applyVenueToUi(); }
+    if (msg.conditions) waterCurrent = msg.conditions;
+    if (msg.conditionModel && msg.conditionModel.source !== "manual") {
+      conditionsHint.textContent = "Room model: " + msg.conditionModel.source + " · valid "
+        + new Date(msg.conditionModel.validTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        + ". Conditions freeze when the sequence starts.";
+    }
+    if (Number.isFinite(msg.aiCount)) aiOpponentCount.value = String(msg.aiCount);
     renderRoster(msg.roster, msg.hostId);
   } else if (msg.t === "start_countdown") {
+    if (msg.prestartSeconds) prestartSeconds = msg.prestartSeconds;
     if (!isWaiting) lobby.classList.add("hide");
   } else if (msg.t === "snapshot") {
     onSnapshot(msg);
@@ -419,7 +554,7 @@ function renderRoster(roster, hostId) {
     row.appendChild(dot); row.appendChild(nm); row.appendChild(st);
     target.appendChild(row);
   }
-  joined.forEach(r => addRosterRow(rosterList, r, r.setup ? r.setup.sailChoice + " · " + Math.round(r.setup.skipperWeightKg) + "kg" : "ready"));
+  joined.forEach(r => addRosterRow(rosterList, r, r.ai ? "AI · " + r.setup.sailChoice : (r.setup ? r.setup.sailChoice + " · " + Math.round(r.setup.skipperWeightKg) + "kg" : "ready")));
   waiting.forEach((r, i) => addRosterRow(waitingList, r, "#" + (i + 1)));
   if (!joined.length) rosterList.innerHTML = '<div class="empty-roster">No sailors joined yet</div>';
   if (!waiting.length) waitingList.innerHTML = '<div class="empty-roster">Lobby is clear</div>';
@@ -427,10 +562,15 @@ function renderRoster(roster, hostId) {
   venueApplyBtn.disabled = !isHost || roomStatus !== "lobby";
   venueMapApplyBtn.disabled = !isHost || roomStatus !== "lobby";
   venueLocateBtn.disabled = !isHost || roomStatus !== "lobby";
+  conditionsMode.disabled = !isHost || roomStatus !== "lobby";
+  conditionsApplyBtn.disabled = !isHost || roomStatus !== "lobby";
+  prestartSecondsInput.disabled = !isHost || roomStatus !== "lobby";
+  aiOpponentCount.disabled = !isHost || roomStatus !== "lobby";
+  aiFleetApplyBtn.disabled = !isHost || roomStatus !== "lobby";
   if (roomStatus === "lobby") {
     lobby.classList.remove("hide");
     startBtn.disabled = !isHost || isWaiting;
-    startBtn.textContent = isWaiting ? "WAITING FOR A RACE SEAT" : (isHost ? "START 3:00 SEQUENCE" : "WAITING FOR HOST");
+    startBtn.textContent = isWaiting ? "WAITING FOR A RACE SEAT" : (isHost ? "START " + fmtClock(prestartSeconds) + " SEQUENCE" : "WAITING FOR HOST");
     startBtn.classList.toggle("active", isHost && !isWaiting);
   } else {
     if (isWaiting) {
@@ -445,6 +585,9 @@ function renderRoster(roster, hostId) {
 
 function onSnapshot(msg) {
   wind.dir = msg.wind.dir; wind.speed = msg.wind.speed;
+  if (msg.prestartSeconds) prestartSeconds = msg.prestartSeconds;
+  if (msg.waterCurrent) waterCurrent = msg.waterCurrent;
+  updateGameWindCondition();
   roomStatus = msg.roomStatus; raceClock = msg.raceClock;
   if (msg.startLine) startLine = msg.startLine;
   lastSnapshotBoats = msg.boats;
@@ -460,6 +603,7 @@ function onSnapshot(msg) {
       }
       authoritative = b;
       if (b.dirtyWind) myDirtyWind = b.dirtyWind;
+      if (b.sailingWind) mySailingWind = b.sailingWind;
       if (b.setup) myBoat.setup = normalizeBoatSetup(b.setup);
       if (b.setupEffect) myBoat.setupEffect = b.setupEffect;
       myRace = b.race;
@@ -482,10 +626,10 @@ function stepLocalPrediction(dt) {
   if (myRace.penalty && myRace.penalty.active) {
     myBoat.targetHeadingDeg = wrap360(myBoat.headingDeg + 45); // mirrors the server's forced-turn override
   }
-  const localWind = myDirtyWind.exposure01 > 0.01
+  const localWind = mySailingWind || (myDirtyWind.exposure01 > 0.01
     ? { dir: myDirtyWind.effectiveDir, speed: myDirtyWind.effectiveSpeed }
-    : wind;
-  const info = stepBoatKinematics(myBoat, localWind, dt);
+    : wind);
+  const info = stepBoatKinematics(myBoat, localWind, dt, waterCurrent);
   if (authoritative) {
     const dx = authoritative.worldX - myBoat.worldX, dy = authoritative.worldY - myBoat.worldY;
     const d = Math.hypot(dx, dy);
@@ -903,16 +1047,16 @@ function updateRaceHud() {
     elRaceClock.textContent = "FINISHED — " + place + " · " + (myRace.finishTime || 0).toFixed(1) + "s";
     elRaceLeg.textContent = "next race starts automatically";
     elMarkArrow.style.opacity = 0; elMarkDist.textContent = "";
-  } else if (raceClock < PRESTART_SECONDS) {
-    elRaceClock.textContent = "PRESTART · " + fmtClock(PRESTART_SECONDS - raceClock);
+  } else if (raceClock < prestartSeconds) {
+    elRaceClock.textContent = "PRESTART · " + fmtClock(prestartSeconds - raceClock);
     elRaceLeg.textContent = myRace.ocs ? "OCS — get back below the line" : "→ start line";
     updateMarkPointer({ x: (startLine.pinX + startLine.boatEndX) / 2, y: startLine.y });
   } else {
-    elRaceClock.textContent = "RACE · " + fmtClock(raceClock - PRESTART_SECONDS);
+    elRaceClock.textContent = "RACE · " + fmtClock(raceClock - prestartSeconds);
     elRaceLeg.textContent = myRace.leg === 1 ? "→ windward mark" : "→ finish";
     updateMarkPointer(currentMarkFor(myRace.leg));
   }
-  elOcs.classList.toggle("show", myRace.ocs && raceClock < PRESTART_SECONDS);
+  elOcs.classList.toggle("show", myRace.ocs && raceClock < prestartSeconds);
   elPenalty.classList.toggle("show", myRace.penalty.active);
   if (myRace.penalty.active) {
     elPenaltyRule.textContent = myRace.penalty.rule;
@@ -924,7 +1068,7 @@ function statusLabel(b) {
   if (b.race.penalty.active) return "PENALTY " + Math.round(b.race.penalty.turnedDeg) + "°";
   if (b.race.status === "finished") return "FINISHED " + (b.race.place ? "#" + b.race.place : "");
   if (roomStatus === "lobby") return "lobby";
-  if (raceClock < PRESTART_SECONDS) return b.race.ocs ? "OCS" : "prestart";
+  if (raceClock < prestartSeconds) return b.race.ocs ? "OCS" : "prestart";
   return "leg " + b.race.leg;
 }
 

@@ -134,7 +134,7 @@ export function noGoSpeed(absTwaDeg, twsKnots, noGoHalf = NO_GO_HALF) {
   return lerp(drift, fullCloseHauled, eased);
 }
 
-export function stepBoatKinematics(s, wind, dt) {
+export function stepBoatKinematics(s, wind, dt, waterCurrent = null) {
   const twaSigned = wrap180(wind.dir - s.headingDeg);
   const absTwa = Math.abs(twaSigned);
   const setupEffect = boatSetupPerformance(s.setup, wind.speed);
@@ -180,6 +180,12 @@ export function stepBoatKinematics(s, wind, dt) {
   const hr = s.headingDeg * D2R;
   s.worldX += Math.sin(hr) * mps * dt;
   s.worldY += -Math.cos(hr) * mps * dt;
+  if (waterCurrent && waterCurrent.speedKnots > 0) {
+    const currentMps = waterCurrent.speedKnots * MPS_PER_KNOT;
+    const currentRad = wrap360(waterCurrent.directionDeg) * D2R;
+    s.worldX += Math.sin(currentRad) * currentMps * dt;
+    s.worldY += -Math.cos(currentRad) * currentMps * dt;
+  }
 
   const drifting = s.speedKnots <= 0.05;
   return { twaSigned, absTwa, inNoGo: pinching, drifting, setupEffect };
