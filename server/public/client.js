@@ -93,8 +93,32 @@ const venueInput = document.getElementById("venueInput");
 const venueBearing = document.getElementById("venueBearing");
 const venueApplyBtn = document.getElementById("venueApplyBtn");
 const venueLocateBtn = document.getElementById("venueLocateBtn");
+const venueMapApplyBtn = document.getElementById("venueMapApplyBtn");
+const venueMapCoords = document.getElementById("venueMapCoords");
 const venueStatus = document.getElementById("venueStatus");
 const attribution = document.getElementById("attribution");
+let venuePickerMap = null;
+
+function updateVenuePickerReadout() {
+  if (!venuePickerMap) return;
+  const centre = venuePickerMap.getCenter();
+  venueMapCoords.textContent = centre.lat.toFixed(5) + ", " + centre.lng.toFixed(5) + " · zoom " + venuePickerMap.getZoom();
+  venueInput.value = centre.lat.toFixed(5) + ", " + centre.lng.toFixed(5);
+}
+
+function initVenuePicker() {
+  if (!window.L || venuePickerMap) return;
+  venuePickerMap = window.L.map("venueMap", {
+    center: [-41.0, 172.5], zoom: 5, minZoom: 5, maxZoom: 20,
+    maxBounds: [[-48.5, 164.5], [-32.5, 180]], maxBoundsViscosity: 0.8
+  });
+  window.L.tileLayer("/tiles/{z}/{x}/{y}.webp", {
+    minZoom: 5, maxZoom: 20, attribution: "Imagery © LINZ · CC BY 4.0"
+  }).addTo(venuePickerMap);
+  venuePickerMap.on("move zoom", updateVenuePickerReadout);
+  updateVenuePickerReadout();
+}
+initVenuePicker();
 
 // Accepts what you get from Google Maps / LINZ: "-41.2865, 174.7762"
 function parseLatLon(text) {
@@ -126,6 +150,14 @@ if (venueApplyBtn) {
     sendVenue(parsed.lat, parsed.lon);
   });
 }
+if (venueMapApplyBtn) {
+  venueMapApplyBtn.addEventListener("click", () => {
+    if (!venuePickerMap) { venueStatus.textContent = "map is still loading"; return; }
+    const centre = venuePickerMap.getCenter();
+    venueStatus.textContent = "setting course at map centre…";
+    sendVenue(centre.lat, centre.lng);
+  });
+}
 if (venueLocateBtn) {
   venueLocateBtn.addEventListener("click", () => {
     if (!navigator.geolocation) { venueStatus.textContent = "this browser has no location support"; return; }
@@ -147,6 +179,13 @@ function applyVenueToUi() {
   if (venue) {
     venueInput.value = venue.lat.toFixed(5) + ", " + venue.lon.toFixed(5);
     venueBearing.value = Math.round(venue.bearingDeg);
+    if (venuePickerMap) {
+      const current = venuePickerMap.getCenter();
+      if (Math.abs(current.lat - venue.lat) > 0.00001 || Math.abs(current.lng - venue.lon) > 0.00001) {
+        venuePickerMap.setView([venue.lat, venue.lon], Math.max(venuePickerMap.getZoom(), 15));
+      }
+      setTimeout(() => venuePickerMap.invalidateSize(), 0);
+    }
     venueStatus.textContent = "course set — wind from " + Math.round(venue.bearingDeg) + "°T"
       + (imageryAvailable ? "" : " · no imagery key on this Worker");
     // Keep the shareable link carrying the venue, so a fresh room from this
@@ -327,6 +366,9 @@ function renderRoster(roster, hostId) {
   if (!joined.length) rosterList.innerHTML = '<div class="empty-roster">No sailors joined yet</div>';
   if (!waiting.length) waitingList.innerHTML = '<div class="empty-roster">Lobby is clear</div>';
   isHost = myId && myId === hostId;
+  venueApplyBtn.disabled = !isHost || roomStatus !== "lobby";
+  venueMapApplyBtn.disabled = !isHost || roomStatus !== "lobby";
+  venueLocateBtn.disabled = !isHost || roomStatus !== "lobby";
   if (roomStatus === "lobby") {
     lobby.classList.remove("hide");
     startBtn.disabled = !isHost || isWaiting;

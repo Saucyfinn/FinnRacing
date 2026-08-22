@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>FinnRacing &mdash; Online</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230c1a1f'/%3E%3Cpath d='M16 5 L24 24 L16 21 L8 24 Z' fill='%23dba85a'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
   :root {
     --bg: #0a1628;
@@ -161,6 +162,15 @@
   .inline-lbl { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.06em; color: var(--muted); }
   .venue-row .ghost { margin-left: auto; }
   .venue-status { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; color: var(--muted); margin: 8px 0 0; }
+  .venue-map-wrap { position:relative; height:280px; margin-top:10px; border:1px solid var(--border); border-radius:8px; overflow:hidden; background:#081220; touch-action:auto; }
+  #venueMap { width:100%; height:100%; }
+  .venue-crosshair { position:absolute; z-index:500; left:50%; top:50%; width:28px; height:28px; transform:translate(-50%,-50%); pointer-events:none; border:2px solid var(--accent); border-radius:50%; box-shadow:0 0 0 2px rgba(8,18,32,.7); }
+  .venue-crosshair::before,.venue-crosshair::after { content:""; position:absolute; background:var(--accent); }
+  .venue-crosshair::before { width:2px; height:38px; left:11px; top:-7px; }
+  .venue-crosshair::after { height:2px; width:38px; left:-7px; top:11px; }
+  .venue-map-footer { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:8px; }
+  .venue-map-coords { color:var(--muted); font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:10.5px; }
+  .leaflet-control-attribution { font-size:9px !important; }
 
   .zoom-group { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
   .zoom-btn {
@@ -225,7 +235,16 @@
       </div>
     </div>
     <div class="lobby-field">
-      <label>Course position &mdash; paste coordinates from any map</label>
+      <label>Race area &mdash; zoom and place the crosshair over the course</label>
+      <div class="venue-map-wrap">
+        <div id="venueMap" aria-label="New Zealand race area map"></div>
+        <div class="venue-crosshair" aria-hidden="true"></div>
+      </div>
+      <div class="venue-map-footer">
+        <span class="venue-map-coords" id="venueMapCoords">Move the map to choose an area</span>
+        <button class="ghost active" id="venueMapApplyBtn" type="button" disabled>SET COURSE HERE</button>
+      </div>
+      <label style="margin-top:12px">Or paste coordinates</label>
       <div class="link-row">
         <input type="text" id="venueInput" placeholder="-41.28650, 174.77620" autocomplete="off" inputmode="decimal">
         <button class="ghost" id="venueLocateBtn" type="button" title="Use my current location">📍</button>
@@ -321,6 +340,7 @@
 
 <a class="attribution" id="attribution" href="https://basemaps.linz.govt.nz/" target="_blank" rel="noopener">Imagery &copy; LINZ &middot; CC BY 4.0</a>
 
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script type="module" src="./client.js"></script>
 </body>
 </html>
