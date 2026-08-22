@@ -7,6 +7,8 @@ import {
   spawnPositions, startLineForBoatCount, leewardGateForStartLine, PRESTART_SECONDS, RACE_TIMEOUT_SECONDS
 } from "./physics.js";
 import { DEFAULT_VENUE, isDefaultVenue, isLegacyDefaultVenue } from "./venue.js";
+import { localToLatLon } from "../public/geo.js";
+import { loadLandCollisionMap } from "./landCollision.js";
 
 const BOAT_COLORS = ["#e2ece9", "#6fa9d9", "#f0c581", "#c98bd8", "#7fd1a8", "#e2726f"];
 const RESTART_DELAY_SEC = 6;
@@ -49,6 +51,8 @@ export class RaceRoom {
     this.startLine = startLineForBoatCount(0);
     this.windwardMark = { x: 0, y: -1852 };
     this.gateConfig = { offsetM: -100, widthM: 15, centerX: 0 };
+    this.landCollisionMap = null;
+    this.landCollisionLoad = null;
     this.hostId = null;
     this.restartTimer = 0;
     this.tickHandle = null;
@@ -104,6 +108,7 @@ export class RaceRoom {
       bearingDeg: Number.isFinite(brg) ? ((brg % 360) + 360) % 360 : Math.floor(Math.random() * 360)
     };
     this.venueChosenFromLink = true;
+    this.loadLandCollision();
   }
 
   freeSeat() {
@@ -244,6 +249,7 @@ export class RaceRoom {
       this.wind.baseDir = 0;
       this.waterCurrent.directionDeg = wrap360(trueCurrentDirection - this.venue.bearingDeg);
       this.waterCurrent.trueDirectionDeg = trueCurrentDirection;
+      this.loadLandCollision();
       this.broadcastRoster();
     }
   }
@@ -270,6 +276,7 @@ export class RaceRoom {
 
   beginRace() {
     this.alignCourseToStartWind();
+    this.loadLandCollision();
     const seats = [];
     for (let i = 0; i < MAX_BOATS; i++) if (this.connected[i]) seats.push(i);
     this.startLine = startLineForBoatCount(seats.length);
@@ -306,6 +313,43 @@ export class RaceRoom {
     this.wind.baseDir = wrap360(this.wind.baseDir - localWindAtStart);
     this.waterCurrent.directionDeg = wrap360(trueCurrentDirection - trueWindAtStart);
     this.waterCurrent.trueDirectionDeg = trueCurrentDirection;
+  }
+
+  loadLandCollision() {
+    const venueKey = this.venue ? `${this.venue.lat},${this.venue.lon}` : "";
+    const loading = loadLandCollisionMap(this.venue, this.env.LINZ_API_KEY);
+    this.landCollisionLoad = loading;
+    void loading.then(map => {
+      if (this.landCollisionLoad === loading && this.venue && `${this.venue.lat},${this.venue.lon}` === venueKey) this.landCollisionMap = map;
+    }).catch(() => {
+      if (this.landCollisionLoad === loading) this.landCollisionMap = null;
+    });
+  }
+
+  solidObstacleAt(x, y) {
+    const gate = leewardGateForStartLine(this.startLine, this.gateConfig);
+    const marks = [
+      { x: this.windwardMark.x, y: this.windwardMark.y },
+      { x: gate.portX, y: gate.y }, { x: gate.starboardX, y: gate.y },
+      { x: this.startLine.pinX, y: this.startLine.y }, { x: this.startLine.boatEndX, y: this.startLine.y }
+    ];
+    if (marks.some(mark => Math.hypot(x - mark.x, y - mark.y) <= FINN_LENGTH_M / 2 + 1)) return "MARK";
+    if (this.landCollisionMap && this.venue) {
+      const gps = localToLatLon(x, y, this.venue);
+      if (this.landCollisionMap.isLand(gps.lat, gps.lon)) return "LAND";
+    }
+    return null;
+  }
+
+  stopAtSolidObstacle(boat, race, previousX, previousY, dt) {
+    if (race.obstacle && race.obstacle.timer > 0) {
+      race.obstacle.timer = Math.max(0, race.obstacle.timer - dt);
+      if (race.obstacle.timer === 0) race.obstacle.active = false;
+    }
+    const type = this.solidObstacleAt(boat.worldX, boat.worldY);
+    if (!type) return;
+    boat.worldX = previousX; boat.worldY = previousY; boat.speedKnots = 0;
+    race.obstacle = { active: true, type, timer: 0.8 };
   }
 
   assignSeat(session) {
@@ -524,13 +568,18 @@ export class RaceRoom {
     if (this.roomStatus === "lobby") {
       const activeBoats = activeSeats.map(i => this.boats[i]);
       stepFleetDirtyWind(activeBoats, wind, dt, activeSeats);
-      for (const i of activeSeats) stepBoatKinematics(this.boats[i], this.windForBoat(this.boats[i], wind), dt, this.waterCurrent);
+      for (const i of activeSeats) {
+        const boat = this.boats[i], previousX = boat.worldX, previousY = boat.worldY;
+        stepBoatKinematics(boat, this.windForBoat(boat, wind), dt, this.waterCurrent);
+        this.stopAtSolidObstacle(boat, this.races[i], previousX, previousY, dt);
+      }
     } else {
       this.raceClock += dt;
       const activeBoats = activeSeats.map(i => this.boats[i]);
       stepFleetDirtyWind(activeBoats, wind, dt, activeSeats);
       for (const i of activeSeats) {
         const boat = this.boats[i], rs = this.races[i];
+        const previousX = boat.worldX, previousY = boat.worldY;
         if (rs.status === "disqualified" || (rs.collision && rs.collision.active)) {
           boat.speedKnots = 0;
         } else {
@@ -538,6 +587,7 @@ export class RaceRoom {
           stepBoatKinematics(boat, this.windForBoat(boat, wind), dt, this.waterCurrent);
           updatePenaltyProgress(boat, rs, dt);
         }
+        this.stopAtSolidObstacle(boat, rs, previousX, previousY, dt);
         stepRace(boat, rs, this.raceClock, dt, this.startLine, this.prestartSeconds, this.windwardMark, this.gateConfig);
       }
       const activeRaces = activeSeats.map(i => this.races[i]);
@@ -617,7 +667,8 @@ export class RaceRoom {
         race: {
           status: r.status, leg: r.leg, ocs: r.ocs, finishTime: r.finishTime, place: r.place,
           penalty: { active: r.penalty.active, pending: r.penalty.pending, autoComplete: r.penalty.autoComplete, count: r.penalty.count, turnedDeg: round2(r.penalty.turnedDeg), rule: r.penalty.rule },
-          collision: r.collision
+          collision: r.collision,
+          obstacle: r.obstacle || { active: false, type: null, timer: 0 }
         }
       };
     });

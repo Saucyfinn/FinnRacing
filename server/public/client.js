@@ -700,6 +700,9 @@ function onSnapshot(msg) {
       if (b.setup) myBoat.setup = normalizeBoatSetup(b.setup);
       if (b.setupEffect) myBoat.setupEffect = b.setupEffect;
       myRace = b.race;
+      if (b.race.obstacle && b.race.obstacle.active) {
+        myBoat.worldX = b.worldX; myBoat.worldY = b.worldY; myBoat.speedKnots = 0;
+      }
     } else {
       let buf = remoteBuffers[b.boatIndex];
       if (!buf) buf = remoteBuffers[b.boatIndex] = [];
@@ -1291,7 +1294,9 @@ function updateRaceHud() {
   elOcs.classList.toggle("show", myRace.ocs && raceClock < prestartSeconds);
   elPenalty.classList.toggle("show", myRace.penalty.active || myRace.penalty.pending);
   elDsq.classList.toggle("show", myRace.status === "disqualified");
-  elCollision.classList.toggle("show", !!(myRace.collision && myRace.collision.active));
+  const solidHit = myRace.obstacle && myRace.obstacle.active;
+  elCollision.textContent = solidHit ? myRace.obstacle.type + " COLLISION — BOAT STOPPED" : "COLLISION — BOATS STOPPED";
+  elCollision.classList.toggle("show", !!((myRace.collision && myRace.collision.active) || solidHit));
   if (myRace.penalty.active) {
     elPenaltyRule.textContent = penaltyRuleGuidance(myRace.penalty.rule);
     elPenaltyDeg.textContent = " " + Math.round(myRace.penalty.turnedDeg) + "°/360°";

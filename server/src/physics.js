@@ -414,7 +414,8 @@ export function freshRaceState() {
   return {
     status: "prestart", leg: 1, ocs: false, prevWorldX: 0, prevWorldY: 0, finishTime: null, place: null,
     penalty: { active: false, pending: false, autoComplete: true, count: 0, turnedDeg: 0, rule: null, lastHeading: 0 }, immunityTimer: 0,
-    collision: { active: false, timer: 0, withBoatIndex: null }
+    collision: { active: false, timer: 0, withBoatIndex: null },
+    obstacle: { active: false, type: null, timer: 0 }
   };
 }
 
