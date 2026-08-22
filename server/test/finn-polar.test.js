@@ -3,19 +3,26 @@ import assert from "node:assert/strict";
 
 import {
   FINN_CLOSE_HAULED_MAX_KNOTS,
+  BY_THE_LEE_MAX_DEG,
+  FINN_BOOM_OUTER_POINT_M,
   FINN_LENGTH_M,
   FINN_BEAM_M,
   freshBoatState,
   freshRaceState,
   polarSpeed,
+  idealTrimAngle,
   stepBoatKinematics,
   stepRace,
   startLineForBoatCount,
   leewardGateForStartLine, seaStateFor
 } from "../src/physics.js";
 import {
+  BY_THE_LEE_MAX_DEG as CLIENT_BY_THE_LEE_MAX_DEG,
+  FINN_BOOM_OUTER_POINT_M as CLIENT_FINN_BOOM_OUTER_POINT_M,
   FINN_LENGTH_M as CLIENT_FINN_LENGTH_M,
   FINN_BEAM_M as CLIENT_FINN_BEAM_M,
+  idealTrimAngle as clientIdealTrimAngle,
+  tackSignForTwa as clientTackSignForTwa,
   leewardGateForStartLine as clientLeewardGateForStartLine,
   currentMarkFor as clientCurrentMarkFor
 } from "../public/physics-client.js";
@@ -54,6 +61,59 @@ test("Finn polar is capped at 5.4 knots at 40 degrees", () => {
     assert.ok(polarSpeed(40, windSpeed) <= FINN_CLOSE_HAULED_MAX_KNOTS);
   }
   assert.equal(polarSpeed(40, 25), FINN_CLOSE_HAULED_MAX_KNOTS);
+});
+
+test("boom trim follows point of sail and reaches 90 degrees dead downwind", () => {
+  assert.equal(FINN_BOOM_OUTER_POINT_M, 3.23);
+  assert.equal(CLIENT_FINN_BOOM_OUTER_POINT_M, FINN_BOOM_OUTER_POINT_M);
+  assert.equal(idealTrimAngle(40), 10);
+  assert.equal(idealTrimAngle(90), 40);
+  assert.equal(idealTrimAngle(180), 90);
+  assert.equal(clientIdealTrimAngle(40), idealTrimAngle(40));
+  assert.equal(clientIdealTrimAngle(90), idealTrimAngle(90));
+  assert.equal(clientIdealTrimAngle(180), idealTrimAngle(180));
+
+  const boat = freshBoatState(180);
+  stepBoatKinematics(boat, { dir: 0, speed: 10 }, 0.1);
+  assert.equal(boat.trimAngleDeg, 90);
+});
+
+test("boat can sail 20 degrees by the lee before gybing", () => {
+  assert.equal(BY_THE_LEE_MAX_DEG, 20);
+  assert.equal(CLIENT_BY_THE_LEE_MAX_DEG, BY_THE_LEE_MAX_DEG);
+  assert.equal(clientTackSignForTwa(-170, 1), 1);
+  assert.equal(clientTackSignForTwa(-159, 1), -1);
+  assert.ok(polarSpeed(165, 10) > polarSpeed(180, 10));
+
+  const boat = freshBoatState(170);
+  boat.tackSign = 1;
+  stepBoatKinematics(boat, { dir: 0, speed: 10 }, 0.1);
+  assert.equal(boat.tackSign, 1, "10 degrees by the lee retains the existing tack");
+
+  boat.headingDeg = 159;
+  boat.targetHeadingDeg = 159;
+  boat.tackLockoutTimer = 0;
+  stepBoatKinematics(boat, { dir: 0, speed: 10 }, 0.1);
+  assert.equal(boat.tackSign, -1, "more than 20 degrees by the lee completes the gybe");
+});
+
+test("waves add a small by-the-lee speed benefit", () => {
+  const waves = freshBoatState(170);
+  waves.tackSign = 1;
+  const waveState = stepBoatKinematics(
+    waves,
+    { dir: 0, speed: 16 },
+    0.1,
+    { speedKnots: 0.4, directionDeg: 180 }
+  ).seaState;
+  assert.equal(waveState.byTheLee, true);
+  assert.ok(waveState.byTheLeeBoostKnots > 0);
+  assert.ok(waveState.byTheLeeBoostKnots < 0.25, "the wave benefit remains modest");
+
+  const flat = freshBoatState(170);
+  flat.tackSign = 1;
+  const flatState = stepBoatKinematics(flat, { dir: 0, speed: 5 }, 0.1).seaState;
+  assert.equal(flatState.byTheLeeBoostKnots, 0);
 });
 
 test("optimized boat setup cannot exceed the 40-degree hull-speed cap", () => {

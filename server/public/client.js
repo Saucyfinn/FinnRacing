@@ -1,7 +1,7 @@
 import {
   D2R, clamp, lerp, wrap360, wrap180,
   NO_GO_HALF, TRIM_MAX_ERROR, PX_PER_METER,
-  FINN_LENGTH_M, FINN_BEAM_M, PIN_X, BOAT_END_X, START_Y, WINDWARD_MARK, PRESTART_SECONDS,
+  FINN_LENGTH_M, FINN_BEAM_M, FINN_BOOM_OUTER_POINT_M, PIN_X, BOAT_END_X, START_Y, WINDWARD_MARK, PRESTART_SECONDS,
   idealTrimAngle, stepBoatKinematics, freshBoatState, normalizeBoatSetup, boatSetupPerformance,
   dist, bearingTo, currentMarkFor, leewardGateForStartLine
 } from "./physics-client.js";
@@ -1119,7 +1119,7 @@ function drawBoatShape(originX, originY, headingDeg, hullColor, trimAngleDeg, ta
   wctx.stroke();
 
   // Top-down boom/sail plan, scaled in metres like the hull.
-  const boomLength = 2.3 * viewScale;
+  const boomLength = FINN_BOOM_OUTER_POINT_M * viewScale;
   const trim = clamp(Math.abs(trimAngleDeg), 0, 90) * D2R;
   const mastY = -0.35 * viewScale;
   const side = tackSign > 0 ? -1 : 1;

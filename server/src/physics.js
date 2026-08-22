@@ -64,6 +64,8 @@ export const TURN_RATE_MIN = 11;
 export const TRIM_MAX_ERROR = 25;
 export const STERNWAY_DRIFT_FACTOR = 0.06;
 export const MPS_PER_KNOT = 0.5144;
+export const BY_THE_LEE_MAX_DEG = 20;
+export const BY_THE_LEE_TWA_MIN = 180 - BY_THE_LEE_MAX_DEG;
 
 export function seaStateFor(wind, waterCurrent = null) {
   const currentSpeed = clamp(Number(waterCurrent?.speedKnots) || 0, 0, 6);
@@ -159,6 +161,7 @@ export function boatSetupPerformance(setupValue, twsKnots) {
 // ---------- course: two windward/leewards with a downwind finish ----------
 export const FINN_LENGTH_M = 4.5;
 export const FINN_BEAM_M = 1.51;
+export const FINN_BOOM_OUTER_POINT_M = 3.23;
 // Aerodynamic gameplay constants are grouped for later on-water calibration.
 export const DIRTY_WIND = Object.freeze({
   wakeLengthM: FINN_LENGTH_M * 12,
@@ -223,7 +226,19 @@ export function leewardGateForStartLine(startLine, gateConfig = {}) {
   };
 }
 
-export function idealTrimAngle(twaDeg) { return clamp(twaDeg * 0.5, 6, 80); }
+const TRIM_TWA_ROWS = [40, 60, 90, 120, 150, 165, 180];
+const TRIM_ANGLE_ROWS = [10, 20, 40, 60, 78, 85, 90];
+
+export function idealTrimAngle(twaDeg) {
+  const a = bracket(TRIM_TWA_ROWS, Math.abs(twaDeg));
+  return lerp(TRIM_ANGLE_ROWS[a.lo], TRIM_ANGLE_ROWS[a.hi], a.t);
+}
+
+export function tackSignForTwa(twaSigned, currentTackSign) {
+  const windSide = twaSigned >= 0 ? 1 : -1;
+  if (windSide === currentTackSign) return currentTackSign;
+  return Math.abs(twaSigned) >= BY_THE_LEE_TWA_MIN ? currentTackSign : windSide;
+}
 export function turnRateFor(absTwaDeg) {
   const t = clamp(absTwaDeg / (NO_GO_HALF * 1.4), 0, 1);
   return lerp(TURN_RATE_MIN, TURN_RATE_MAX, t);
@@ -379,7 +394,7 @@ export function stepBoatKinematics(s, wind, dt, waterCurrent = null) {
   if (Math.abs(toTarget) <= rate) s.headingDeg = wrap360(s.headingDeg + toTarget);
   else s.headingDeg = wrap360(s.headingDeg + Math.sign(toTarget) * rate);
 
-  const newTack = twaSigned >= 0 ? 1 : -1;
+  const newTack = tackSignForTwa(twaSigned, s.tackSign);
   if (s.tackLockoutTimer > 0) s.tackLockoutTimer -= dt;
   if (newTack !== s.tackSign && s.tackLockoutTimer <= 0) {
     s.tackSign = newTack;
@@ -387,6 +402,7 @@ export function stepBoatKinematics(s, wind, dt, waterCurrent = null) {
   }
 
   if (s.autoTrim) {
+    s.trimAngleDeg = idealTrimAngle(absTwa);
     s.trimEfficiency01 = 0.97;
   } else {
     const ideal = idealTrimAngle(absTwa);
@@ -406,11 +422,25 @@ export function stepBoatKinematics(s, wind, dt, waterCurrent = null) {
   }
   const upwind01 = clamp((105 - absTwa) / 65, 0, 1);
   target *= 1 - seaState.chop01 * upwind01 * 0.14;
+  const windSide = twaSigned >= 0 ? 1 : -1;
+  const byTheLee01 = windSide !== s.tackSign
+    ? clamp((180 - absTwa) / BY_THE_LEE_MAX_DEG, 0, 1)
+    : 0;
+  const usefulWave01 = clamp((seaState.waveHeightM - 0.35) / 1.15, 0, 1);
+  const byTheLeeMultiplier = 1 + byTheLee01 * usefulWave01 * 0.035 * (1 - seaState.chop01 * 0.3);
+  const byTheLeeBoostKnots = target * (byTheLeeMultiplier - 1);
+  target += byTheLeeBoostKnots;
   const downwind01 = clamp((absTwa - 100) / 65, 0, 1);
   const waveCrest01 = Math.max(0, Math.sin(s.waveClock * TAU + s.worldX * 0.025 + s.worldY * 0.012));
   const surfBoostKnots = downwind01 * waveCrest01 * seaState.waveHeightM * (0.75 + wind.speed * 0.025) * (1 - seaState.chop01 * 0.35);
   target += surfBoostKnots;
-  s.seaState = { ...seaState, surfing: surfBoostKnots >= 0.35, surfBoostKnots };
+  s.seaState = {
+    ...seaState,
+    surfing: surfBoostKnots >= 0.35,
+    surfBoostKnots,
+    byTheLee: byTheLee01 > 0,
+    byTheLeeBoostKnots
+  };
   if (absTwa <= NO_GO_HALF) target = Math.min(target, FINN_CLOSE_HAULED_MAX_KNOTS);
   const maxStep = ACCEL_KT_PER_SEC * setupEffect.accelerationMultiplier * dt;
   if (Math.abs(target - s.speedKnots) <= maxStep) s.speedKnots = target;
