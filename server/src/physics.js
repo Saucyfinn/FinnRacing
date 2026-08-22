@@ -194,6 +194,7 @@ export const HULL_COLLISION_RADIUS_M = 4.2;
 export const COLLISION_STOP_SECONDS = 1.5;
 export const PENALTY_TURN_DEG = 360;
 export const PENALTY_IMMUNITY_SEC = 4;
+export const RACE_ENTRY_IMMUNITY_SEC = 8;
 
 export function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
 export function bearingTo(fromX, fromY, toX, toY) {
@@ -643,15 +644,17 @@ export function stepRules(boats, races, wind, dt, seatIds = boats.map((_, index)
   }
 }
 
-// Spread N starting positions along the start line, all on a reaching
-// heading roughly wind ± 70deg so nobody spawns already in the no-go zone.
+// Stage the fleet in a roomy grid behind the line. The 2.5-boat-length gaps
+// prevent AI or human boats from inheriting a rules incident at race entry.
 export function spawnPositions(count, wind, startLine = startLineForBoatCount(count)) {
-  const usableWidth = (startLine.boatEndX - startLine.pinX) - 6;
+  const spacingM = FINN_LENGTH_M * 2.5;
+  const columns = Math.min(3, Math.max(1, count));
   const out = [];
   for (let i = 0; i < count; i++) {
-    const t = count === 1 ? 0.5 : i / (count - 1);
-    const x = startLine.pinX + 3 + usableWidth * t;
-    const y = startLine.y + 12 + (i % 2 === 0 ? 3 : 0);
+    const row = Math.floor(i / columns), column = i % columns;
+    const rowCount = Math.min(columns, count - row * columns);
+    const x = (column - (rowCount - 1) / 2) * spacingM;
+    const y = startLine.y + 14 + row * spacingM;
     const heading = wrap360(wind.dir + (i % 2 === 0 ? 70 : -70));
     out.push({ x, y, headingDeg: heading });
   }

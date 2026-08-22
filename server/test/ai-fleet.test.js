@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { RaceRoom } from "../src/raceRoom.js";
-import { stepBoatKinematics, stepRace } from "../src/physics.js";
+import { RACE_ENTRY_IMMUNITY_SEC, spawnPositions, stepBoatKinematics, stepRace } from "../src/physics.js";
 
 function room() { return new RaceRoom({}, {}); }
 
@@ -33,6 +33,20 @@ test("AI fleet requests return a confirmed opponent count", () => {
 
   assert.equal(raceRoom.aiSeats.size, 2);
   assert.deepEqual(replies.at(-1), { t: "ai_fleet_result", count: 2, limited: false });
+});
+
+test("race-entry staging gives every boat generous separation and rules immunity", () => {
+  for (let count = 2; count <= 6; count++) {
+    const positions = spawnPositions(count, { dir: 0, speed: 12 });
+    for (let i = 0; i < positions.length; i++) for (let j = i + 1; j < positions.length; j++) {
+      assert.ok(Math.hypot(positions[i].x - positions[j].x, positions[i].y - positions[j].y) >= 11);
+    }
+  }
+
+  const raceRoom = room();
+  raceRoom.setAiCount(3);
+  raceRoom.beginRace();
+  for (const seat of raceRoom.aiSeats) assert.equal(raceRoom.races[seat].immunityTimer, RACE_ENTRY_IMMUNITY_SEC);
 });
 
 test("the course axis aligns to the wind when the start sequence begins", () => {

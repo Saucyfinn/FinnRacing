@@ -4,7 +4,7 @@ import {
   windAt, freshBoatState, stepBoatKinematics, stepFleetDirtyWind, effectiveWindForBoat,
   normalizeBoatSetup,
   freshRaceState, stepRace, stepRules, applyPenaltyOverride, updatePenaltyProgress,
-  spawnPositions, startLineForBoatCount, leewardGateForStartLine, PRESTART_SECONDS, RACE_TIMEOUT_SECONDS
+  spawnPositions, startLineForBoatCount, leewardGateForStartLine, PRESTART_SECONDS, RACE_TIMEOUT_SECONDS, RACE_ENTRY_IMMUNITY_SEC
 } from "./physics.js";
 import { DEFAULT_VENUE, isDefaultVenue, isLegacyDefaultVenue } from "./venue.js";
 import { localToLatLon } from "../public/geo.js";
@@ -293,6 +293,7 @@ export class RaceRoom {
       this.boats[seat] = fresh;
       const rs = freshRaceState();
       rs.prevWorldX = spawn.x; rs.prevWorldY = spawn.y;
+      rs.immunityTimer = RACE_ENTRY_IMMUNITY_SEC;
       this.races[seat] = rs;
     });
     this.raceClock = 0;
