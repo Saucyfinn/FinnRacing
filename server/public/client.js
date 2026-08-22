@@ -50,6 +50,7 @@ let wind = { dir: 0, speed: 10 };
 let waterCurrent = { speedKnots: 0, directionDeg: 0, seaLevelM: null, source: "manual" };
 let myDirtyWind = { type: "clean", sourceBoatIndex: null, exposure01: 0, speedDeficitKnots: 0, directionShiftDeg: 0, effectiveSpeed: 10, effectiveDir: 0 };
 let mySailingWind = null;
+let mySeaState = { label: "SLIGHT", chop01: 0, waveHeightM: 0.08, surfing: false, surfBoostKnots: 0 };
 let roomStatus = "lobby";
 let raceClock = 0;
 let prestartSeconds = PRESTART_SECONDS;
@@ -81,6 +82,8 @@ const skipperWeightInput = document.getElementById("skipperWeight");
 const sailChoiceInput = document.getElementById("sailChoice");
 const mastPositionInput = document.getElementById("mastPosition");
 const rigTensionInput = document.getElementById("rigTension");
+const mastPositionNumberInput = document.getElementById("mastPositionNumber");
+const rigTensionNumberInput = document.getElementById("rigTensionNumber");
 const mastPositionValue = document.getElementById("mastPositionValue");
 const rigTensionValue = document.getElementById("rigTensionValue");
 const setupHint = document.getElementById("setupHint");
@@ -211,6 +214,8 @@ function writeBoatSetup(setupValue) {
   sailChoiceInput.value = setup.sailChoice;
   mastPositionInput.value = setup.mastPositionMm;
   rigTensionInput.value = setup.rigTensionKg;
+  mastPositionNumberInput.value = setup.mastPositionMm;
+  rigTensionNumberInput.value = setup.rigTensionKg;
   myBoat.setup = setup;
   updateSetupReadout();
 }
@@ -241,6 +246,26 @@ for (const input of [skipperWeightInput, sailChoiceInput, mastPositionInput, rig
   input.addEventListener("input", () => saveAndSendSetup(false));
   input.addEventListener("change", () => saveAndSendSetup(true));
 }
+function connectSetupNumber(rangeInput, numberInput) {
+  rangeInput.addEventListener("input", () => { numberInput.value = rangeInput.value; });
+  numberInput.addEventListener("input", () => {
+    if (!numberInput.validity.valid || numberInput.value === "") return;
+    rangeInput.value = numberInput.value;
+    saveAndSendSetup(false);
+  });
+  numberInput.addEventListener("change", () => {
+    const normalized = normalizeBoatSetup({
+      mastPositionMm: rangeInput === mastPositionInput ? numberInput.value : mastPositionInput.value,
+      rigTensionKg: rangeInput === rigTensionInput ? numberInput.value : rigTensionInput.value
+    });
+    const value = rangeInput === mastPositionInput ? normalized.mastPositionMm : normalized.rigTensionKg;
+    rangeInput.value = value;
+    numberInput.value = value;
+    saveAndSendSetup(true);
+  });
+}
+connectSetupNumber(mastPositionInput, mastPositionNumberInput);
+connectSetupNumber(rigTensionInput, rigTensionNumberInput);
 
 nameInput.value = localStorage.getItem("finnracing_name") || "";
 nameInput.addEventListener("change", () => {
@@ -279,10 +304,30 @@ const venueApplyBtn = document.getElementById("venueApplyBtn");
 const venueLocateBtn = document.getElementById("venueLocateBtn");
 const venueMapApplyBtn = document.getElementById("venueMapApplyBtn");
 const venueMapCoords = document.getElementById("venueMapCoords");
+const markTapButtons = [...document.querySelectorAll("[data-course-mark]")];
 const venueStatus = document.getElementById("venueStatus");
 const attribution = document.getElementById("attribution");
 let venuePickerMap = null;
 let venueStartMarker = null, venueWindwardMarker = null, venueGatePortMarker = null, venueGateStarboardMarker = null, venueCourseLine = null, venueGateLine = null;
+let selectedCourseMark = "start";
+
+function selectCourseMark(markName) {
+  selectedCourseMark = markName;
+  for (const button of markTapButtons) button.classList.toggle("active", button.dataset.courseMark === markName);
+}
+
+function setDefaultGate(centerX = 0) {
+  if (!venueStartMarker || !venueWindwardMarker || !venueGatePortMarker || !venueGateStarboardMarker) return;
+  const start = venueStartMarker.getLatLng(), mark = venueWindwardMarker.getLatLng();
+  const dLon = (mark.lng - start.lng) * D2R;
+  const lat1 = start.lat * D2R, lat2 = mark.lat * D2R;
+  const bearingDeg = wrap360(Math.atan2(Math.sin(dLon) * Math.cos(lat2), Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon)) / D2R);
+  const pickerVenue = { lat: start.lat, lon: start.lng, bearingDeg };
+  const port = localToLatLon(centerX - 7.5, -100, pickerVenue);
+  const starboard = localToLatLon(centerX + 7.5, -100, pickerVenue);
+  venueGatePortMarker.setLatLng([port.lat, port.lon]);
+  venueGateStarboardMarker.setLatLng([starboard.lat, starboard.lon]);
+}
 
 function coursePickerState() {
   if (!venueStartMarker || !venueWindwardMarker || !venueGatePortMarker || !venueGateStarboardMarker) return null;
@@ -341,8 +386,38 @@ function initVenuePicker() {
   venueGateStarboardMarker = window.L.marker([gateStarboard.lat, gateStarboard.lon], { draggable: true, title: "GATE STARBOARD" }).addTo(venuePickerMap).bindTooltip("GATE S", { permanent: true, direction: "right" });
   venueCourseLine = window.L.polyline([venueStartMarker.getLatLng(), venueWindwardMarker.getLatLng()], { color: "#4fc3f7", weight: 3, dashArray: "7 5" }).addTo(venuePickerMap);
   venueGateLine = window.L.polyline([venueGatePortMarker.getLatLng(), venueGateStarboardMarker.getLatLng()], { color: "#f0c581", weight: 3, dashArray: "5 4" }).addTo(venuePickerMap);
-  for (const marker of [venueStartMarker, venueWindwardMarker, venueGatePortMarker, venueGateStarboardMarker]) marker.on("drag", updateCoursePicker);
+  venueStartMarker.on("click", () => selectCourseMark("start"));
+  venueWindwardMarker.on("click", () => selectCourseMark("windward"));
+  venueGatePortMarker.on("click", () => selectCourseMark("gate"));
+  venueGateStarboardMarker.on("click", () => selectCourseMark("gate"));
+  for (const marker of [venueStartMarker, venueWindwardMarker]) marker.on("drag", () => { setDefaultGate(); updateCoursePicker(); });
+  for (const [marker, side] of [[venueGatePortMarker, -1], [venueGateStarboardMarker, 1]]) marker.on("drag", () => {
+    const course = coursePickerState();
+    if (!course) return;
+    const start = venueStartMarker.getLatLng();
+    const local = latLonToLocal(marker.getLatLng().lat, marker.getLatLng().lng, { lat: start.lat, lon: start.lng, bearingDeg: course.bearingDeg });
+    setDefaultGate(local.x - side * 7.5);
+    updateCoursePicker();
+  });
+  for (const button of markTapButtons) button.addEventListener("click", () => selectCourseMark(button.dataset.courseMark));
+  venuePickerMap.on("click", (event) => {
+    if (!isHost || roomStatus !== "lobby") return;
+    if (selectedCourseMark === "start") {
+      venueStartMarker.setLatLng(event.latlng);
+      setDefaultGate();
+    } else if (selectedCourseMark === "windward") {
+      venueWindwardMarker.setLatLng(event.latlng);
+      setDefaultGate();
+    } else {
+      const course = coursePickerState(), start = venueStartMarker.getLatLng();
+      if (!course) return;
+      const local = latLonToLocal(event.latlng.lat, event.latlng.lng, { lat: start.lat, lon: start.lng, bearingDeg: course.bearingDeg });
+      setDefaultGate(local.x);
+    }
+    updateCoursePicker();
+  });
   venuePickerMap.on("move zoom", updateVenuePickerReadout);
+  selectCourseMark("start");
   updateVenuePickerReadout();
 }
 initVenuePicker();
@@ -646,6 +721,7 @@ function renderRoster(roster, hostId) {
     const canEditCourse = isHost && roomStatus === "lobby";
     for (const marker of [venueStartMarker, venueWindwardMarker, venueGatePortMarker, venueGateStarboardMarker]) canEditCourse ? marker.dragging.enable() : marker.dragging.disable();
   }
+  for (const button of markTapButtons) button.disabled = !isHost || roomStatus !== "lobby";
   if (roomStatus === "lobby") {
     lobby.classList.remove("hide");
     startBtn.disabled = !isHost || isWaiting;
@@ -659,7 +735,7 @@ function renderRoster(roster, hostId) {
       startBtn.classList.remove("active");
     } else lobby.classList.add("hide");
   }
-  for (const input of [skipperWeightInput, sailChoiceInput, mastPositionInput, rigTensionInput]) input.disabled = roomStatus !== "lobby";
+  for (const input of [skipperWeightInput, sailChoiceInput, mastPositionInput, rigTensionInput, mastPositionNumberInput, rigTensionNumberInput]) input.disabled = roomStatus !== "lobby";
   updateRaceLayout();
 }
 
@@ -691,11 +767,14 @@ function onSnapshot(msg) {
         myBoat.worldX = b.worldX; myBoat.worldY = b.worldY;
         myBoat.headingDeg = b.headingDeg; myBoat.targetHeadingDeg = b.headingDeg;
         myBoat.speedKnots = b.speedKnots; myBoat.tackSign = b.tackSign;
+        myBoat.waveClock = b.waveClock || 0;
         myInitialized = true;
       }
       authoritative = b;
       if (b.dirtyWind) myDirtyWind = b.dirtyWind;
       if (b.sailingWind) mySailingWind = b.sailingWind;
+      if (b.seaState) { mySeaState = b.seaState; myBoat.seaState = b.seaState; }
+      if (Number.isFinite(b.waveClock)) myBoat.waveClock = b.waveClock;
       myHail = b.hail;
       if (b.setup) myBoat.setup = normalizeBoatSetup(b.setup);
       if (b.setupEffect) myBoat.setupEffect = b.setupEffect;
@@ -726,6 +805,7 @@ function stepLocalPrediction(dt) {
     ? { dir: myDirtyWind.effectiveDir, speed: myDirtyWind.effectiveSpeed }
     : wind);
   const info = stepBoatKinematics(myBoat, localWind, dt, waterCurrent);
+  if (info.seaState) mySeaState = info.seaState;
   if (authoritative) {
     const dx = authoritative.worldX - myBoat.worldX, dy = authoritative.worldY - myBoat.worldY;
     const d = Math.hypot(dx, dy);
@@ -1185,27 +1265,6 @@ function drawWorld(info, dt) {
   wctx.fillStyle = "rgba(226,236,233,0.75)"; wctx.font = "10.5px 'IBM Plex Mono', monospace"; wctx.textAlign = "center";
   wctx.fillText("YOU", cx, cy - 28);
 
-  // Keep the official sequence visible in the sailing view, independent of
-  // the compact sidebar HUD and readable over both imagery and plain water.
-  if (roomStatus === "prestart" || raceClock < prestartSeconds) {
-    const remaining = Math.max(0, prestartSeconds - raceClock);
-    const clock = fmtClock(remaining);
-    const urgent = remaining <= 10;
-    wctx.save();
-    wctx.textAlign = "center";
-    wctx.fillStyle = urgent ? "rgba(86,25,28,0.88)" : "rgba(5,18,31,0.82)";
-    wctx.strokeStyle = urgent ? "rgba(226,114,111,0.95)" : "rgba(79,195,247,0.75)";
-    wctx.lineWidth = 1.5;
-    const boxWidth = 190, boxHeight = 70, boxX = cx - boxWidth / 2, boxY = 24;
-    wctx.beginPath(); wctx.roundRect(boxX, boxY, boxWidth, boxHeight, 10); wctx.fill(); wctx.stroke();
-    wctx.fillStyle = urgent ? "#ff8d89" : "#8bdcff";
-    wctx.font = "600 11px 'IBM Plex Mono', monospace";
-    wctx.fillText("START SEQUENCE", cx, boxY + 20);
-    wctx.fillStyle = "#f5fbff";
-    wctx.font = "700 32px 'IBM Plex Mono', monospace";
-    wctx.fillText(clock, cx, boxY + 55);
-    wctx.restore();
-  }
   drawMapCompass(w);
 }
 
@@ -1215,6 +1274,7 @@ const elTwa = document.getElementById("rTwa");
 const elSpeed = document.getElementById("rSpeed");
 const elHeading = document.getElementById("rHeading");
 const elSetup = document.getElementById("rSetup");
+const elSea = document.getElementById("rSea");
 const elTack = document.getElementById("tackBadge");
 const elStall = document.getElementById("stallBanner");
 const elOcs = document.getElementById("ocsBanner");
@@ -1228,6 +1288,8 @@ const elDirtyWind = document.getElementById("dirtyWindBanner");
 const elTapeReadout = document.getElementById("tapeReadout");
 const elTrimReadout = document.getElementById("trimReadout");
 const elRaceClock = document.getElementById("raceClock");
+const controlStartTimer = document.getElementById("controlStartTimer");
+const controlStartTime = document.getElementById("controlStartTime");
 const elRaceLeg = document.getElementById("raceLeg");
 const elMarkArrow = document.getElementById("markArrow");
 const elMarkDist = document.getElementById("markDist");
@@ -1263,6 +1325,11 @@ function updateMarkPointer(mark) {
 }
 
 function updateRaceHud() {
+  const startRemaining = Math.max(0, prestartSeconds - raceClock);
+  const showStartTimer = roomStatus !== "lobby" && raceClock < prestartSeconds;
+  controlStartTimer.classList.toggle("show", showStartTimer);
+  controlStartTimer.classList.toggle("urgent", showStartTimer && startRemaining <= 10);
+  controlStartTime.textContent = fmtClock(startRemaining);
   if (roomStatus === "lobby" || !myInitialized) {
     elRaceClock.textContent = "LOBBY"; elRaceLeg.textContent = "waiting to start";
     elMarkArrow.style.opacity = 0; elMarkDist.textContent = "";
@@ -1349,6 +1416,9 @@ function updateHud(info) {
   elHeading.textContent = Math.round(trueDeg(myBoat.headingDeg)) + bearingSuffix();
   const setupEffect = info.setupEffect || myBoat.setupEffect;
   elSetup.textContent = myBoat.setup.sailChoice + " · " + Math.round(setupEffect.speedMultiplier * 100) + "% · rig " + Math.round(setupEffect.rigMatch01 * 100) + "%";
+  const sea = info.seaState || mySeaState;
+  elSea.textContent = sea.surfing ? "SURFING +" + sea.surfBoostKnots.toFixed(1) + " kt" : sea.label + " · " + sea.waveHeightM.toFixed(1) + " m";
+  elSea.classList.toggle("warn", sea.chop01 >= 0.65);
   elTack.textContent = myBoat.tackSign > 0 ? "STARBOARD TACK" : "PORT TACK";
   elTack.className = "tack-badge " + (myBoat.tackSign > 0 ? "starboard" : "port");
   elStall.textContent = myBoat.speedKnots < -0.05 ? "IN IRONS — DRIFTING BACKWARD" : "IN IRONS — NO DRIVE";

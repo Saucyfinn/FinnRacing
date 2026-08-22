@@ -122,6 +122,10 @@
   button.ghost:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
   .controls { position:fixed; left:276px; right:16px; bottom:16px; display:flex; flex-direction:column; gap:10px; }
+  .control-start-timer { display:none; align-self:center; min-width:170px; padding:7px 16px; border:1px solid var(--accent); border-radius:10px; background:rgba(5,18,31,.88); color:#f5fbff; text-align:center; font:700 25px/1.1 "IBM Plex Mono",ui-monospace,monospace; box-shadow:0 5px 20px rgba(0,0,0,.28); }
+  .control-start-timer.show { display:block; }
+  .control-start-timer.urgent { color:#ff8d89; border-color:var(--danger); background:rgba(86,25,28,.9); }
+  .control-start-timer small { display:block; margin-bottom:3px; color:var(--accent-strong); font-size:9px; letter-spacing:.12em; }
   .control-block { background: rgba(18,34,40,0.82); backdrop-filter: blur(6px); border: 1px solid var(--border); border-radius: 12px; padding: 8px 10px 10px; }
   .control-label { display: flex; justify-content: space-between; align-items: center; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 4px; padding: 0 2px; }
   .control-label b { color: var(--accent-strong); font-weight: 500; }
@@ -154,6 +158,8 @@
     padding:9px 10px; font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:13px;
   }
   .setup-control input[type=range] { width:100%; accent-color:var(--accent); }
+  .setup-value-row { display:grid; grid-template-columns:minmax(0,1fr) 84px; gap:9px; align-items:center; }
+  .setup-value-row input[type=number] { padding:7px 8px; text-align:right; }
   .setup-hint { grid-column:1/-1; color:var(--muted); font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:10.5px; line-height:1.45; }
   .weather-panel { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
   .weather-item { padding:10px 11px; background:var(--surface-alt); border:1px solid var(--border); border-radius:9px; }
@@ -166,6 +172,8 @@
   .link-row { display: flex; gap: 8px; }
   .link-row input { flex: 1; }
   .link-row select { flex:1; background:var(--surface-alt); border:1px solid var(--border); color:var(--ink); border-radius:8px; padding:10px 12px; font-family:"IBM Plex Mono",ui-monospace,monospace; }
+  .mark-tap-controls { display:flex; flex-wrap:wrap; gap:7px; margin:8px 0; }
+  .mark-tap-controls button { flex:1 1 105px; min-height:42px; }
   .link-row button { flex: none; }
   .roster-box { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
   .roster-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
@@ -273,11 +281,12 @@
       z-index:12; left:8px; right:8px;
       bottom:max(8px, env(safe-area-inset-bottom)); gap:0;
     }
-    body.race-active .controls .control-block:first-child {
+    body.race-active .controls .heading-control {
       padding:6px; background:rgba(8,18,32,.72); border-color:rgba(26,58,85,.65);
     }
-    body.race-active .controls .control-block:nth-child(2),
+    body.race-active .controls .trim-control,
     body.race-active .controls .legend { display:none; }
+    body.race-active .control-start-timer { min-width:140px; padding:5px 13px; font-size:21px; }
     body.race-active .controls .control-label { margin:0 2px 3px; font-size:9px; }
     body.race-active #headingTape { height:54px; }
     body.race-active .stall-banner {
@@ -356,11 +365,17 @@
         </div>
         <div class="setup-control">
           <label for="mastPosition">Mast position <output id="mastPositionValue">50 mm</output></label>
-          <input type="range" id="mastPosition" min="35" max="56" step="1" value="50">
+          <div class="setup-value-row">
+            <input type="range" id="mastPosition" min="35" max="56" step="1" value="50">
+            <input type="number" id="mastPositionNumber" aria-label="Mast position in millimetres" min="35" max="56" step="1" value="50" inputmode="decimal">
+          </div>
         </div>
         <div class="setup-control">
           <label for="rigTension">Rig tension <output id="rigTensionValue">35.0 kg</output></label>
-          <input type="range" id="rigTension" min="30" max="40" step="0.5" value="35">
+          <div class="setup-value-row">
+            <input type="range" id="rigTension" min="30" max="40" step="0.5" value="35">
+            <input type="number" id="rigTensionNumber" aria-label="Rig tension in kilograms" min="30" max="40" step="0.5" value="35" inputmode="decimal">
+          </div>
         </div>
         <div class="setup-hint" id="setupHint">Analyzer target updates with effective wind.</div>
       </div>
@@ -381,13 +396,18 @@
       <p class="weather-meta">AI boats use the same Finn polar, setup, dirty wind, rules, and tidal current as human sailors.</p>
     </div>
     <div class="lobby-field">
-      <label>Race area &mdash; drag START and WINDWARD marks to set course and length</label>
+      <label>Race area &mdash; drag marks, or select a mark then tap the map</label>
+      <div class="mark-tap-controls" id="markTapControls" aria-label="Select a course mark to move">
+        <button class="ghost active" type="button" data-course-mark="start">START</button>
+        <button class="ghost" type="button" data-course-mark="windward">WINDWARD</button>
+        <button class="ghost" type="button" data-course-mark="gate">LEEWARD GATE</button>
+      </div>
       <div class="venue-map-wrap">
         <div id="venueMap" aria-label="New Zealand race area map"></div>
         <div class="venue-crosshair" aria-hidden="true"></div>
       </div>
       <div class="venue-map-footer">
-        <span class="venue-map-coords" id="venueMapCoords">Drag course marks to choose the course</span>
+        <span class="venue-map-coords" id="venueMapCoords">START selected · tap the map to move it</span>
         <button class="ghost active" id="venueMapApplyBtn" type="button" disabled>SET COURSE HERE</button>
       </div>
       <label style="margin-top:12px">Or paste coordinates</label>
@@ -432,6 +452,7 @@
         <span class="lbl">speed</span><span class="val" id="rSpeed">&mdash;</span>
         <span class="lbl">heading</span><span class="val" id="rHeading">&mdash;</span>
         <span class="lbl">setup</span><span class="val" id="rSetup">&mdash;</span>
+        <span class="lbl">sea</span><span class="val" id="rSea">&mdash;</span>
         <div class="tack-badge" id="tackBadge">&mdash;</div>
       </div>
     </div>
@@ -462,7 +483,8 @@
   <div class="stall-banner penalty-banner" id="collisionBanner">COLLISION &mdash; BOATS STOPPED</div>
 
   <div class="controls">
-    <div class="control-block">
+    <div class="control-start-timer" id="controlStartTimer"><small>START SEQUENCE</small><span id="controlStartTime">3:00</span></div>
+    <div class="control-block heading-control">
       <div class="control-label">
         <span>HEADING &mdash; drag the bug to set a target</span>
         <b id="tapeReadout">&mdash;</b>
@@ -476,7 +498,7 @@
       </div>
     </div>
 
-    <div class="control-block">
+    <div class="control-block trim-control">
       <div class="control-label">
         <span>SAIL TRIM</span>
         <span style="display:flex; gap:8px; align-items:center;">

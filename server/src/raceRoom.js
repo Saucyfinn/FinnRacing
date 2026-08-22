@@ -242,8 +242,8 @@ export class RaceRoom {
       const courseLengthM = clamp(Number(msg.courseLengthM) || Math.abs(this.windwardMark.y), 50, 5000);
       this.windwardMark = { x: 0, y: -courseLengthM };
       this.gateConfig = {
-        offsetM: -clamp(Math.abs(Number(msg.gateOffsetM) || Math.abs(this.gateConfig.offsetM)), 5, 5000),
-        widthM: clamp(Number(msg.gateWidthM) || this.gateConfig.widthM, 5, 200),
+        offsetM: -100,
+        widthM: 15,
         centerX: clamp(Number(msg.gateCenterX) || 0, -2500, 2500)
       };
       this.wind.baseDir = 0;
@@ -342,6 +342,7 @@ export class RaceRoom {
   }
 
   stopAtSolidObstacle(boat, race, previousX, previousY, dt) {
+    const wasOnLand = race.obstacle && race.obstacle.active && race.obstacle.type === "LAND";
     if (race.obstacle && race.obstacle.timer > 0) {
       race.obstacle.timer = Math.max(0, race.obstacle.timer - dt);
       if (race.obstacle.timer === 0) race.obstacle.active = false;
@@ -350,6 +351,10 @@ export class RaceRoom {
     if (!type) return;
     boat.worldX = previousX; boat.worldY = previousY; boat.speedKnots = 0;
     race.obstacle = { active: true, type, timer: 0.8 };
+    if (type === "LAND" && !wasOnLand) {
+      const seat = this.boats.indexOf(boat);
+      if (seat >= 0) this.issueHail(seat, null, "BUGGER", "land");
+    }
   }
 
   assignSeat(session) {
@@ -560,6 +565,7 @@ export class RaceRoom {
 
     this.wind.t += dt;
     const wind = windAt(this.wind.baseDir, this.wind.baseSpeed, this.wind.t);
+    for (const [seat, hail] of this.activeHails) if (hail.until <= this.wind.t) this.activeHails.delete(seat);
 
     const activeSeats = [];
     for (let i = 0; i < MAX_BOATS; i++) if (this.boats[i]) activeSeats.push(i);
@@ -649,6 +655,7 @@ export class RaceRoom {
         boatIndex: i, name: this.names[i], color: BOAT_COLORS[i % BOAT_COLORS.length], connected: !!this.connected[i], ai: this.aiSeats.has(i),
         worldX: round2(b.worldX), worldY: round2(b.worldY), headingDeg: round2(b.headingDeg),
         speedKnots: round2(b.speedKnots), tackSign: b.tackSign, autoTrim: b.autoTrim,
+        waveClock: round3(b.waveClock || 0), seaState: b.seaState || null,
         trimAngleDeg: round2(b.trimAngleDeg), trimEfficiency01: round2(b.trimEfficiency01),
         setup: b.setup,
         sailingWind: this.windForBoat(b, wind),

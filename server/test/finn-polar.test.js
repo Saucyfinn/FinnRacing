@@ -11,7 +11,7 @@ import {
   stepBoatKinematics,
   stepRace,
   startLineForBoatCount,
-  leewardGateForStartLine
+  leewardGateForStartLine, seaStateFor
 } from "../src/physics.js";
 import {
   FINN_LENGTH_M as CLIENT_FINN_LENGTH_M,
@@ -79,6 +79,32 @@ test("tidal current changes ground track without changing speed through water", 
   assert.equal(tide.speedKnots, stillWater.speedKnots);
   assert.ok(Math.abs((tide.worldX - stillWater.worldX) - 2 * 0.5144) < 1e-9);
   assert.ok(Math.abs(tide.worldY - stillWater.worldY) < 1e-9);
+});
+
+test("wind against tide creates more chop than a following tide", () => {
+  const wind = { dir: 0, speed: 16 };
+  const against = seaStateFor(wind, { speedKnots: 2, directionDeg: 0 });
+  const following = seaStateFor(wind, { speedKnots: 2, directionDeg: 180 });
+  assert.ok(against.chop01 > following.chop01 + 0.5);
+  assert.equal(against.label, "STEEP CHOP");
+});
+
+test("chop slows an upwind Finn and waves produce downwind surfing bursts", () => {
+  const wind = { dir: 0, speed: 16 };
+  const flat = freshBoatState(40), choppy = freshBoatState(40);
+  for (let i = 0; i < 200; i++) {
+    stepBoatKinematics(flat, wind, 0.1, { speedKnots: 0, directionDeg: 0 });
+    stepBoatKinematics(choppy, wind, 0.1, { speedKnots: 2, directionDeg: 0 });
+  }
+  assert.ok(choppy.speedKnots < flat.speedKnots - 0.25);
+
+  const downwind = freshBoatState(180);
+  let maxSurfBoost = 0;
+  for (let i = 0; i < 300; i++) {
+    const state = stepBoatKinematics(downwind, wind, 0.1, { speedKnots: 0.4, directionDeg: 180 }).seaState;
+    maxSurfBoost = Math.max(maxSurfBoost, state.surfBoostKnots);
+  }
+  assert.ok(maxSurfBoost >= 0.5);
 });
 
 test("custom start sequence controls when a line crossing starts the race", () => {

@@ -65,6 +65,18 @@ export const TRIM_MAX_ERROR = 25;
 export const STERNWAY_DRIFT_FACTOR = 0.06;
 export const MPS_PER_KNOT = 0.5144;
 
+export function seaStateFor(wind, waterCurrent = null) {
+  const currentSpeed = clamp(Number(waterCurrent?.speedKnots) || 0, 0, 6);
+  const currentDirection = Number(waterCurrent?.directionDeg) || 0;
+  // Wind direction is FROM; current direction is TOWARD. Current flowing
+  // toward the wind source opposes the wind-driven surface water.
+  const againstWind01 = Math.max(0, Math.cos(wrap180(currentDirection - wind.dir) * D2R));
+  const windSea01 = clamp((wind.speed - 5) / 18, 0, 1);
+  const chop01 = clamp(windSea01 * 0.18 + againstWind01 * clamp(currentSpeed / 2.5, 0, 1) * (0.35 + windSea01 * 0.65), 0, 1);
+  const waveHeightM = clamp(0.08 + windSea01 * 1.15 + chop01 * 0.55, 0.08, 1.8);
+  return { againstWind01, chop01, waveHeightM, label: chop01 >= 0.65 ? "STEEP CHOP" : chop01 >= 0.3 ? "CHOPPY" : waveHeightM >= 0.75 ? "WAVES" : "SLIGHT" };
+}
+
 // ---------- individual Finn setup ----------
 export const SAIL_CHOICES = Object.freeze(["GS1-", "GS1", "GS1+", "WB"]);
 export const DEFAULT_BOAT_SETUP = Object.freeze({
@@ -347,6 +359,7 @@ export function freshBoatState(headingDeg, setup = DEFAULT_BOAT_SETUP) {
     headingDeg, targetHeadingDeg: headingDeg, speedKnots: 0,
     trimAngleDeg: 30, trimEfficiency01: 1, autoTrim: true,
     tackSign: 1, tackLockoutTimer: 0,
+    waveClock: 0, seaState: seaStateFor({ dir: 0, speed: 10 }),
     worldX: 0, worldY: 0,
     dirtyWind: cleanDirtyWind({ dir: 0, speed: 10 }),
     setup: normalizeBoatSetup(setup), setupEffect: boatSetupPerformance(setup, 10)
@@ -382,6 +395,8 @@ export function stepBoatKinematics(s, wind, dt, waterCurrent = null) {
   }
 
   const trimPenalty = lerp(0.55, 1.0, s.trimEfficiency01);
+  const seaState = seaStateFor(wind, waterCurrent);
+  s.waveClock = (s.waveClock || 0) + dt * (0.52 + wind.speed * 0.025);
   let target;
   if (pinching) {
     const raw = noGoSpeed(absTwa, wind.speed, effectiveNoGoHalf);
@@ -389,6 +404,13 @@ export function stepBoatKinematics(s, wind, dt, waterCurrent = null) {
   } else {
     target = polarSpeed(absTwa, wind.speed) * trimPenalty * setupEffect.speedMultiplier;
   }
+  const upwind01 = clamp((105 - absTwa) / 65, 0, 1);
+  target *= 1 - seaState.chop01 * upwind01 * 0.14;
+  const downwind01 = clamp((absTwa - 100) / 65, 0, 1);
+  const waveCrest01 = Math.max(0, Math.sin(s.waveClock * TAU + s.worldX * 0.025 + s.worldY * 0.012));
+  const surfBoostKnots = downwind01 * waveCrest01 * seaState.waveHeightM * (0.75 + wind.speed * 0.025) * (1 - seaState.chop01 * 0.35);
+  target += surfBoostKnots;
+  s.seaState = { ...seaState, surfing: surfBoostKnots >= 0.35, surfBoostKnots };
   if (absTwa <= NO_GO_HALF) target = Math.min(target, FINN_CLOSE_HAULED_MAX_KNOTS);
   const maxStep = ACCEL_KT_PER_SEC * setupEffect.accelerationMultiplier * dt;
   if (Math.abs(target - s.speedKnots) <= maxStep) s.speedKnots = target;
@@ -407,7 +429,7 @@ export function stepBoatKinematics(s, wind, dt, waterCurrent = null) {
   }
 
   const drifting = s.speedKnots <= 0.05;
-  return { twaSigned, absTwa, inNoGo: pinching, drifting, setupEffect };
+  return { twaSigned, absTwa, inNoGo: pinching, drifting, setupEffect, seaState: s.seaState };
 }
 
 export function freshRaceState() {

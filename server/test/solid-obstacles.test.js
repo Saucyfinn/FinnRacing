@@ -28,8 +28,10 @@ test("hitting mapped land restores the last water position and stops the boat", 
   const room = new RaceRoom({}, {});
   room.landCollisionMap = { isLand: () => true };
   const boat = freshBoatState(0), race = freshRaceState();
+  room.boats[0] = boat;
   boat.worldX = 300; boat.worldY = 300; boat.speedKnots = 4;
   room.stopAtSolidObstacle(boat, race, 299, 299, 0.1);
   assert.deepEqual([boat.worldX, boat.worldY, boat.speedKnots], [299, 299, 0]);
   assert.equal(race.obstacle.type, "LAND");
+  assert.equal(room.activeHails.get(0).call, "BUGGER");
 });
